@@ -1,15 +1,24 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import Icon from '@/components/Icon';
 import { ToastProvider } from '@/components/Toast';
-import { CAFE_NAME } from '@/lib/constants';
+import { useTenant } from '@/components/TenantProvider';
 
 function QRGenerator() {
+  const tenant = useTenant();
   const [baseUrl, setBaseUrl] = useState('');
   const [count, setCount] = useState(10);
   const [generated, setGenerated] = useState('');
+
+  // Tebak alamat dari origin saat ini supaya tidak perlu ketik manual.
+  useEffect(() => {
+    if (typeof window !== 'undefined' && !baseUrl) {
+      setBaseUrl(`${window.location.origin}/c/${tenant.slug}`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenant.slug]);
 
   const build = (e) => {
     e.preventDefault();
@@ -19,7 +28,7 @@ function QRGenerator() {
   };
 
   const tables = Array.from({ length: count }, (_, i) => i + 1);
-  const preview = generated ? `${generated}/table/1` : 'https://cafe-anda.vercel.app/table/1';
+  const preview = generated ? `${generated}/table/1` : `${baseUrl}/table/1`;
 
   return (
     <>
@@ -37,7 +46,7 @@ function QRGenerator() {
         <div className="stack gap-1">
           <h1 className="h2">QR Code Meja</h1>
           <p className="muted small">
-            Buat QR untuk setiap meja, lalu cetak dan tempel.
+            Buat QR untuk setiap meja {tenant.name}, lalu cetak dan tempel.
           </p>
         </div>
         {generated ? (
@@ -61,13 +70,13 @@ function QRGenerator() {
         <div className="row gap-3 wrap" style={{ alignItems: 'flex-end' }}>
           <div className="field grow" style={{ marginBottom: 0, minWidth: 240 }}>
             <label className="label" htmlFor="base-url">
-              Alamat Website Cafe
+              Alamat Halaman Cafe
             </label>
             <input
               id="base-url"
               className="input"
               type="url"
-              placeholder="https://cafe-anda.vercel.app"
+              placeholder={`https://situs-anda.com/c/${tenant.slug}`}
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
               required
@@ -94,8 +103,9 @@ function QRGenerator() {
           </button>
         </div>
         <p className="tiny faint">
-          Tips: gunakan alamat produksi (mis. Vercel) agar QR bisa dipindai
-          pelanggan dari HP mereka.
+          Tips: alamat sudah otomatis terisi sesuai domain aplikasi. Untuk QR
+          yang bisa dipindai dari HP pelanggan, pastikan alamatnya bisa diakses
+          publik.
         </p>
       </form>
 
@@ -121,7 +131,7 @@ function QRGenerator() {
             </span>
             <div className="stack gap-1">
               <span className="eyebrow">Pratinjau</span>
-              <span style={{ fontWeight: 700 }}>{CAFE_NAME}</span>
+              <span style={{ fontWeight: 700 }}>{tenant.name}</span>
               <span className="small muted" style={{ wordBreak: 'break-all' }}>
                 {preview}
               </span>
@@ -145,7 +155,7 @@ function QRGenerator() {
                   style={{ padding: 18, alignItems: 'center', textAlign: 'center' }}
                 >
                   <span className="eyebrow" style={{ color: 'var(--ink-3)' }}>
-                    {CAFE_NAME}
+                    {tenant.name}
                   </span>
                   <span className="h3" style={{ fontSize: '1.35rem' }}>
                     Meja {num}

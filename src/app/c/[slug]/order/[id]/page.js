@@ -9,6 +9,7 @@ import StatusBadge from '@/components/StatusBadge';
 import Confetti from '@/components/Confetti';
 import Icon from '@/components/Icon';
 import { ToastProvider } from '@/components/Toast';
+import { useTenant } from '@/components/TenantProvider';
 import { subscribeToSingleOrder } from '@/lib/db';
 import { ORDER_STATUS, PAYMENT_LABEL, STATUS_META } from '@/lib/constants';
 import { formatDateTime, shortId } from '@/lib/format';
@@ -22,6 +23,7 @@ const TONE_ICON = {
 };
 
 function OrderScreen({ orderId }) {
+  const tenant = useTenant();
   const [order, setOrder] = useState(null);
   const [notFound, setNotFound] = useState(false);
   const [celebrate, setCelebrate] = useState(false);
@@ -29,6 +31,7 @@ function OrderScreen({ orderId }) {
 
   useEffect(() => {
     const unsub = subscribeToSingleOrder(
+      tenant.slug,
       orderId,
       (data) => {
         if (data) {
@@ -41,7 +44,7 @@ function OrderScreen({ orderId }) {
       () => setNotFound(true),
     );
     return () => unsub?.();
-  }, [orderId]);
+  }, [tenant.slug, orderId]);
 
   // Picu confetti sekali saat berubah menjadi "siap diambil".
   useEffect(() => {
@@ -68,7 +71,7 @@ function OrderScreen({ orderId }) {
             <p className="muted small">
               Pastikan tautan benar, atau buat pesanan baru dari meja Anda.
             </p>
-            <Link href="/" className="btn btn-primary">
+            <Link href={`/c/${tenant.slug}`} className="btn btn-primary">
               Kembali ke Beranda
             </Link>
           </div>
@@ -179,10 +182,7 @@ function OrderScreen({ orderId }) {
             </span>
           </div>
 
-          <div
-            className="row between gap-3 wrap"
-            style={{ marginBottom: 14 }}
-          >
+          <div className="row between gap-3 wrap" style={{ marginBottom: 14 }}>
             <div className="stack gap-1">
               <span className="tiny faint">Nama</span>
               <span style={{ fontWeight: 650 }}>{order.customerName}</span>
@@ -205,7 +205,10 @@ function OrderScreen({ orderId }) {
         </section>
 
         {isDone || isCancelled ? (
-          <Link href={`/table/${order.tableNo}`} className="btn btn-primary btn-block btn-lg">
+          <Link
+            href={`/c/${tenant.slug}/table/${order.tableNo}`}
+            className="btn btn-primary btn-block btn-lg"
+          >
             <Icon name="refresh" size={18} />
             Pesan Lagi
           </Link>

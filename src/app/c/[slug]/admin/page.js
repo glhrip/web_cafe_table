@@ -5,9 +5,14 @@ import Icon from '@/components/Icon';
 import StatCard from '@/components/admin/StatCard';
 import OrderCard from '@/components/admin/OrderCard';
 import { ToastProvider, useToast } from '@/components/Toast';
-import { subscribeToOrders, updateOrderStatus, isFirebaseConfigured } from '@/lib/db';
+import { useTenant } from '@/components/TenantProvider';
+import {
+  subscribeToOrders,
+  updateOrderStatus,
+  isFirebaseConfigured,
+} from '@/lib/db';
 import { ORDER_STATUS } from '@/lib/constants';
-import { countItems, formatCurrency, isToday } from '@/lib/format';
+import { formatCurrency, isToday } from '@/lib/format';
 
 const COLUMNS = [
   { status: ORDER_STATUS.PENDING, title: 'Pesanan Baru', tone: 'warning', icon: 'clock' },
@@ -15,10 +20,9 @@ const COLUMNS = [
   { status: ORDER_STATUS.READY, title: 'Siap Diambil', tone: 'success', icon: 'bag' },
 ];
 
-const DONE = [ORDER_STATUS.COMPLETED, ORDER_STATUS.CANCELLED];
-
 function Dashboard() {
   const toast = useToast();
+  const tenant = useTenant();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
@@ -26,6 +30,7 @@ function Dashboard() {
 
   useEffect(() => {
     const unsub = subscribeToOrders(
+      tenant.slug,
       (data) => {
         setOrders(data);
         setLoading(false);
@@ -37,7 +42,7 @@ function Dashboard() {
       },
     );
     return () => unsub?.();
-  }, []);
+  }, [tenant.slug]);
 
   const byStatus = useMemo(() => {
     const map = { pending: [], preparing: [], ready: [], completed: [], cancelled: [] };
@@ -60,7 +65,7 @@ function Dashboard() {
 
   const handleUpdate = async (id, status) => {
     try {
-      await updateOrderStatus(id, status);
+      await updateOrderStatus(tenant.slug, id, status);
       const label =
         status === ORDER_STATUS.CANCELLED ? 'Pesanan dibatalkan' : 'Status diperbarui';
       toast.success(label);
@@ -74,7 +79,9 @@ function Dashboard() {
       <div className="row between gap-3 wrap" style={{ marginBottom: 20 }}>
         <div className="stack gap-1">
           <h1 className="h2">Pesanan Masuk</h1>
-          <p className="muted small">Pantau dan proses pesanan secara real-time.</p>
+          <p className="muted small">
+            Pantau dan proses pesanan {tenant.name} secara real-time.
+          </p>
         </div>
         {!isFirebaseConfigured ? (
           <span className="pill" style={{ color: 'var(--warning)', borderColor: 'var(--warning-bg)' }}>

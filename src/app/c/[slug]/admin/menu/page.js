@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Image from 'next/image';
 import Icon from '@/components/Icon';
 import { ToastProvider, useToast } from '@/components/Toast';
+import { useTenant } from '@/components/TenantProvider';
 import {
   subscribeToMenu,
   addMenuItem,
@@ -25,6 +26,7 @@ const EMPTY = {
 
 function MenuManager() {
   const toast = useToast();
+  const tenant = useTenant();
   const [menu, setMenu] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
@@ -35,6 +37,7 @@ function MenuManager() {
 
   useEffect(() => {
     const unsub = subscribeToMenu(
+      tenant.slug,
       (data) => {
         setMenu(data);
         setLoading(false);
@@ -46,7 +49,7 @@ function MenuManager() {
       },
     );
     return () => unsub?.();
-  }, []);
+  }, [tenant.slug]);
 
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
 
@@ -85,10 +88,10 @@ function MenuManager() {
     };
     try {
       if (editingId) {
-        await updateMenuItem(editingId, payload);
+        await updateMenuItem(tenant.slug, editingId, payload);
         toast.success('Menu diperbarui');
       } else {
-        await addMenuItem(payload);
+        await addMenuItem(tenant.slug, payload);
         toast.success('Menu ditambahkan');
       }
       reset();
@@ -102,7 +105,7 @@ function MenuManager() {
   const remove = async (item) => {
     if (!window.confirm(`Hapus "${item.name}"?`)) return;
     try {
-      await deleteMenuItem(item.id);
+      await deleteMenuItem(tenant.slug, item.id);
       toast.success('Menu dihapus');
     } catch {
       toast.error('Gagal menghapus menu');
@@ -118,7 +121,7 @@ function MenuManager() {
       <div className="row between gap-3 wrap" style={{ marginBottom: 20 }}>
         <div className="stack gap-1">
           <h1 className="h2">Kelola Menu</h1>
-          <p className="muted small">{menu.length} menu terdaftar.</p>
+          <p className="muted small">{menu.length} menu terdaftar di {tenant.name}.</p>
         </div>
         {!isFirebaseConfigured ? (
           <span className="pill" style={{ color: 'var(--warning)', borderColor: 'var(--warning-bg)' }}>
@@ -239,7 +242,7 @@ function MenuManager() {
                   border: '1px solid var(--line)',
                 }}
               >
-                <Image src={form.image} alt="Pratinjau" fill style={{ objectFit: 'cover' }} sizes="44px" />
+                <Image src={form.image} alt="Pratinjau" fill style={{ objectFit: 'cover' }} sizes="44px" unoptimized />
               </span>
             ) : null}
             <button type="submit" className="btn btn-primary" disabled={saving}>
@@ -336,7 +339,7 @@ function MenuManager() {
                 }}
               >
                 {item.image ? (
-                  <Image src={item.image} alt={item.name} fill style={{ objectFit: 'cover' }} sizes="54px" />
+                  <Image src={item.image} alt={item.name} fill style={{ objectFit: 'cover' }} sizes="54px" unoptimized />
                 ) : (
                   <span className="row" style={{ height: '100%', justifyContent: 'center', color: 'var(--brand)' }}>
                     <Icon name="coffee" size={22} />

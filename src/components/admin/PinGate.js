@@ -3,15 +3,16 @@
 import { useState } from 'react';
 import Brand from '@/components/Brand';
 import Icon from '@/components/Icon';
-import { ADMIN_PIN_FALLBACK } from '@/lib/constants';
+import { useTenant } from '@/components/TenantProvider';
 
-/** Layar PIN sebelum masuk dashboard admin. */
+/** Layar PIN sebelum masuk dashboard admin (PIN milik cafe ini). */
 export default function PinGate({ onAuth }) {
+  const tenant = useTenant();
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
   const [shake, setShake] = useState(false);
 
-  const expected = process.env.NEXT_PUBLIC_ADMIN_PIN || ADMIN_PIN_FALLBACK;
+  const expected = String(tenant?.pin || '1234');
 
   const submit = (e) => {
     e.preventDefault();
@@ -30,13 +31,10 @@ export default function PinGate({ onAuth }) {
       <form
         onSubmit={submit}
         className={`card card-pad stack gap-3 fade-up ${shake ? 'pin-shake' : ''}`}
-        style={{
-          width: '100%',
-          maxWidth: 380,
-          textAlign: 'center',
-        }}
+        style={{ width: '100%', maxWidth: 380, textAlign: 'center' }}
       >
         <div className="stack gap-3" style={{ alignItems: 'center' }}>
+          <Brand href={null} size="lg" />
           <span
             className="row"
             style={{
@@ -51,7 +49,7 @@ export default function PinGate({ onAuth }) {
             <Icon name="lock" size={26} />
           </span>
           <div className="stack gap-1">
-            <h1 className="h2">Admin Login</h1>
+            <h1 className="h2">Admin {tenant?.name}</h1>
             <p className="muted small">Masukkan PIN untuk mengelola pesanan.</p>
           </div>
         </div>
@@ -82,9 +80,7 @@ export default function PinGate({ onAuth }) {
               {error}
             </span>
           ) : process.env.NODE_ENV !== 'production' ? (
-            <span className="tiny faint">
-              Mode dev — PIN default: {ADMIN_PIN_FALLBACK}
-            </span>
+            <span className="tiny faint">Mode dev — PIN demo: {expected}</span>
           ) : null}
         </div>
 

@@ -1,9 +1,7 @@
-// Single source of truth untuk status, kategori, dan branding.
-// Dipakai lintas halaman (customer & admin) supaya label konsisten.
+// Sumber tunggal untuk status pesanan, kategori, dan konstanta platform.
+// Branding (nama/tagline/warna) kini per-cafe → lihat lib/tenants.js.
 
-export const CAFE_NAME = process.env.NEXT_PUBLIC_CAFE_NAME || 'Kopi Senja';
-export const CAFE_TAGLINE =
-  process.env.NEXT_PUBLIC_CAFE_TAGLINE || 'Kopi enak, suasana hangat';
+export const PLATFORM_NAME = 'CafeQR';
 
 export const ORDER_STATUS = {
   PENDING: 'pending',
@@ -79,3 +77,8 @@ export const DEFAULT_CATEGORIES = [
 ];
 
 export const ADMIN_PIN_FALLBACK = '1234';
+
+/** Kunci sessionStorage untuk sesi login admin (dipisah per cafe). */
+export function adminAuthKey(slug) {
+  return `cafe-admin-auth:${slug || 'default'}`;
+}

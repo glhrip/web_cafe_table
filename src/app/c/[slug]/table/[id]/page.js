@@ -9,15 +9,15 @@ import CartBar from '@/components/CartBar';
 import CartSheet from '@/components/CartSheet';
 import Icon from '@/components/Icon';
 import { ToastProvider, useToast } from '@/components/Toast';
+import { useTenant } from '@/components/TenantProvider';
 import { getMenuItems, createOrder } from '@/lib/db';
-import { formatCurrency } from '@/lib/format';
-import { CAFE_TAGLINE } from '@/lib/constants';
 
 const ALL = '__all__';
 
 function MenuScreen({ tableId }) {
   const router = useRouter();
   const toast = useToast();
+  const tenant = useTenant();
 
   const [menu, setMenu] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -29,10 +29,13 @@ function MenuScreen({ tableId }) {
   const [submitting, setSubmitting] = useState(false);
   const [lastOrder, setLastOrder] = useState(null);
 
-  // Muat menu + pulihkan keranjang tersimpan.
+  const cartKey = `cart:${tenant.slug}:${tableId}`;
+  const orderKey = `order:${tenant.slug}:${tableId}`;
+
+  // Muat menu tenant.
   useEffect(() => {
     let alive = true;
-    getMenuItems()
+    getMenuItems(tenant.slug)
       .then((items) => {
         if (alive) setMenu(items);
       })
@@ -44,26 +47,27 @@ function MenuScreen({ tableId }) {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [tenant.slug]);
 
+  // Pulihkan keranjang tersimpan.
   useEffect(() => {
     try {
-      const savedCart = localStorage.getItem(`cart:${tableId}`);
+      const savedCart = localStorage.getItem(cartKey);
       if (savedCart) setCart(JSON.parse(savedCart));
-      const savedOrder = localStorage.getItem(`order:${tableId}`);
+      const savedOrder = localStorage.getItem(orderKey);
       if (savedOrder) setLastOrder(savedOrder);
     } catch {
       /* ignore */
     }
-  }, [tableId]);
+  }, [cartKey, orderKey]);
 
   useEffect(() => {
     try {
-      localStorage.setItem(`cart:${tableId}`, JSON.stringify(cart));
+      localStorage.setItem(cartKey, JSON.stringify(cart));
     } catch {
       /* ignore */
     }
-  }, [cart, tableId]);
+  }, [cart, cartKey]);
 
   const categories = useMemo(() => {
     const set = new Set(menu.map((m) => m.category).filter(Boolean));
@@ -124,14 +128,14 @@ function MenuScreen({ tableId }) {
         total,
         status: 'pending',
       };
-      const ref = await createOrder(orderData);
+      const ref = await createOrder(tenant.slug, orderData);
       try {
-        localStorage.setItem(`order:${tableId}`, ref.id);
-        localStorage.removeItem(`cart:${tableId}`);
+        localStorage.setItem(orderKey, ref.id);
+        localStorage.removeItem(cartKey);
       } catch {
         /* ignore */
       }
-      router.push(`/order/${ref.id}`);
+      router.push(`/c/${tenant.slug}/order/${ref.id}`);
     } catch {
       toast.error('Gagal membuat pesanan. Coba lagi.');
       setSubmitting(false);
@@ -158,7 +162,7 @@ function MenuScreen({ tableId }) {
               <span className="eyebrow">Meja {tableId}</span>
               <h1 className="h2">Selamat datang! 👋</h1>
               <p className="muted small">
-                {CAFE_TAGLINE}. Pilih menu favoritmu di bawah ini.
+                {tenant?.tagline || 'Pilih menu favoritmu di bawah ini.'}
               </p>
             </div>
             <div
@@ -205,17 +209,12 @@ function MenuScreen({ tableId }) {
           </div>
 
           {!loading && categories.length > 1 ? (
-            <div
-              className="row gap-2"
-              style={{ overflowX: 'auto', paddingBottom: 4 }}
-            >
+            <div className="row gap-2" style={{ overflowX: 'auto', paddingBottom: 4 }}>
               {categories.map((c) => (
                 <button
                   key={c}
                   type="button"
-                  className={`pill ${
-                    activeCat === c ? 'is-active' : ''
-                  }`}
+                  className={`pill ${activeCat === c ? 'is-active' : ''}`}
                   onClick={() => setActiveCat(c)}
                   style={
                     activeCat === c

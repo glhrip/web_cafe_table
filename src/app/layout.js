@@ -1,5 +1,4 @@
 import { Fraunces, Inter } from 'next/font/google';
-import { CAFE_NAME, CAFE_TAGLINE } from '@/lib/constants';
 import './globals.css';
 
 const display = Fraunces({
@@ -17,11 +16,12 @@ const body = Inter({
 
 export const metadata = {
   title: {
-    default: `${CAFE_NAME} · Pesan dari Meja`,
-    template: `%s · ${CAFE_NAME}`,
+    default: 'CafeQR · Pesan dari Meja',
+    template: '%s · CafeQR',
   },
-  description: CAFE_TAGLINE,
-  applicationName: CAFE_NAME,
+  description:
+    'Platform pesan-antar meja untuk cafe. Satu aplikasi, banyak cafe, tiap cafe punya branding sendiri.',
+  applicationName: 'CafeQR',
 };
 
 export const viewport = {

@@ -1,0 +1,90 @@
+rules_version = '2';
+
+// ===========================================================================
+// CafeQR — Firestore Security Rules (multi-tenant / white-label)
+//
+// Struktur data:
+//   tenants/{slug}                      → profil cafe (nama, logo, tema, PIN)
+//   tenants/{slug}/menu/{itemId}        → menu cafe
+//   tenants/{slug}/orders/{orderId}     → pesanan cafe
+//
+// CATATAN PENTING:
+// PIN admin di sini hanya untuk membuka UI. Karena app memakai Firebase
+// client SDK tanpa Firebase Auth, siapa pun yang punya config bisa menulis
+// langsung. Untuk produksi sungguhan, WAJIB pasang Firebase Auth (custom
+// claims per cafe) dan batasi tulis hanya ke admin cafe terkait.
+//
+// Aturan di bawah ini adalah versi "siap demo": baca bebas, tulis bebas
+// untuk field pesanan pelanggan, tapi field sensitif tenant dijaga.
+// ===========================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---- Tenant profile ---------------------------------------------------
+    match /tenants/{slug} {
+      // Siapa pun boleh membaca profil (untuk menampilkan branding).
+      allow read: if true;
+
+      // Pembuatan/penghapusan cafe dibatasi ke pemanggil terautentikasi.
+      // (Saat ini reseller memakai panel /superadmin — ganti ke cek custom
+      // claim, mis. request.auth.token.role == 'reseller', di produksi.)
+      allow create: if true;
+      allow delete: if false; // hindari penghapusan tak sengaja dari client
+
+      // Update branding: hanya field yang aman.
+      allow update: if request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['name', 'tagline', 'logo', 'theme', 'pin', 'owner', 'status']);
+
+      // ---- Menu -----------------------------------------------------------
+      match /menu/{itemId} {
+        allow read: if true;
+        allow write: if isValidMenuItem();
+      }
+
+      // ---- Orders ---------------------------------------------------------
+      match /orders/{orderId} {
+        allow read: if true;
+
+        // Pelanggan boleh MEMBUAT pesanan baru dengan bentuk data yang benar.
+        allow create: if isValidOrder();
+
+        // Update hanya untuk mengubah status (dipakai dashboard admin).
+        allow update: if request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['status']) && isValidStatus(request.resource.data.status);
+
+        allow delete: if false;
+      }
+    }
+
+    // ---- Validasi ---------------------------------------------------------
+
+    function isValidStatus(s) {
+      return s in ['pending', 'preparing', 'ready', 'completed', 'cancelled'];
+    }
+
+    function isValidMenuItem() {
+      let d = request.resource.data;
+      return d.name is string
+        && d.name.size() > 0
+        && d.name.size() < 120
+        && d.price is number
+        && d.price >= 0
+        && d.price < 100000000;
+    }
+
+    function isValidOrder() {
+      let d = request.resource.data;
+      return d.tableNo is string
+        && d.tableNo.size() > 0
+        && d.customerName is string
+        && d.customerName.size() > 0
+        && d.items is list
+        && d.items.size() > 0
+        && d.items.size() <= 100
+        && d.total is number
+        && d.total >= 0
+        && d.status == 'pending';
+    }
+  }
+}
