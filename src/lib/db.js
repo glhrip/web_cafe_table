@@ -1,31 +1,126 @@
-import { db } from './firebase';
-import { 
-  collection, 
-  addDoc, 
-  getDocs, 
-  doc, 
-  updateDoc, 
-  onSnapshot, 
-  query, 
+import { db, isFirebaseConfigured } from './firebase';
+import { MOCK_MENU } from './mock-data';
+import {
+  collection,
+  addDoc,
+  getDocs,
+  doc,
+  updateDoc,
+  deleteDoc,
+  onSnapshot,
+  query,
   orderBy,
-  serverTimestamp
+  serverTimestamp,
 } from 'firebase/firestore';
 
-// Menu Functions
-export async function getMenuItems() {
-  if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY) {
-    console.warn("Firebase not configured. Returning mock menu.");
-    return getMockMenu();
-  }
-  const snapshot = await getDocs(collection(db, 'menu'));
-  return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+/**
+ * db.js — satu pintu akses data.
+ *
+ * Kalau Firebase belum dikonfigurasi (mode demo), semua fungsi memakai
+ * "demo store" in-memory di bawah ini. Demo store ini MENDUNGKUNG subscription
+ * (onSnapshot) dengan benar, jadi alur buat-pesanan → tracking status tetap
+ * jalan penuh saat presentasi tanpa Firebase.
+ */
+
+// ---------------------------------------------------------------------------
+// Demo store (in-memory)
+// ---------------------------------------------------------------------------
+
+const demo = {
+  menu: MOCK_MENU.map((m) => ({ ...m })),
+  orders: [],
+  menuSubs: new Set(),
+  orderSubs: new Set(),
+  seq: 0,
+};
+
+function emitMenu() {
+  const snapshot = demo.menu.map((m) => ({ ...m }));
+  demo.menuSubs.forEach((cb) => cb(snapshot));
 }
 
-// Order Functions
+function emitOrders() {
+  const snapshot = demo.orders.map((o) => ({ ...o }));
+  demo.orderSubs.forEach((cb) => cb(snapshot));
+}
+
+function emitOrder(orderId) {
+  const order = demo.orders.find((o) => o.id === orderId);
+  demo.orderSubs.forEach((cb) => cb(order ? { ...order } : null));
+}
+
+// ---------------------------------------------------------------------------
+// Menu
+// ---------------------------------------------------------------------------
+
+export function subscribeToMenu(callback, onError) {
+  if (!isFirebaseConfigured) {
+    demo.menuSubs.add(callback);
+    callback(demo.menu.map((m) => ({ ...m })));
+    return () => demo.menuSubs.delete(callback);
+  }
+  return onSnapshot(
+    collection(db, 'menu'),
+    (snapshot) => {
+      callback(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+    },
+    (error) => {
+      console.error('subscribeToMenu error:', error);
+      onError?.(error);
+    },
+  );
+}
+
+export async function getMenuItems() {
+  if (!isFirebaseConfigured) {
+    return demo.menu.map((m) => ({ ...m }));
+  }
+  const snapshot = await getDocs(collection(db, 'menu'));
+  return snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+export async function addMenuItem(data) {
+  if (!isFirebaseConfigured) {
+    const item = { id: `demo-menu-${++demo.seq}`, ...data };
+    demo.menu.push(item);
+    emitMenu();
+    return item;
+  }
+  const ref = await addDoc(collection(db, 'menu'), data);
+  return { id: ref.id, ...data };
+}
+
+export async function updateMenuItem(id, data) {
+  if (!isFirebaseConfigured) {
+    demo.menu = demo.menu.map((m) => (m.id === id ? { ...m, ...data } : m));
+    emitMenu();
+    return;
+  }
+  await updateDoc(doc(db, 'menu', id), data);
+}
+
+export async function deleteMenuItem(id) {
+  if (!isFirebaseConfigured) {
+    demo.menu = demo.menu.filter((m) => m.id !== id);
+    emitMenu();
+    return;
+  }
+  await deleteDoc(doc(db, 'menu', id));
+}
+
+// ---------------------------------------------------------------------------
+// Orders
+// ---------------------------------------------------------------------------
+
 export async function createOrder(orderData) {
-  if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY) {
-    console.warn("Firebase not configured. Mocking create order.");
-    return { id: 'mock-order-id' };
+  if (!isFirebaseConfigured) {
+    const id = `demo-order-${++demo.seq}`;
+    const order = { id, ...orderData, createdAt: new Date() };
+    demo.orders.unshift(order);
+    emitOrders();
+    // Delay kecil supaya halaman tracking sempat ter-mount lebih dulu.
+    setTimeout(() => emitOrder(id), 300);
+    return { id };
   }
   const docRef = await addDoc(collection(db, 'orders'), {
     ...orderData,
@@ -34,51 +129,68 @@ export async function createOrder(orderData) {
   return docRef;
 }
 
-export function subscribeToOrders(callback) {
-  if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY) {
-    console.warn("Firebase not configured. Mocking order subscription.");
-    callback([]);
-    return () => {}; // Return empty unsubscribe function
+export function subscribeToOrders(callback, onError) {
+  if (!isFirebaseConfigured) {
+    demo.orderSubs.add(callback);
+    callback(demo.orders.map((o) => ({ ...o })));
+    return () => demo.orderSubs.delete(callback);
   }
   const q = query(collection(db, 'orders'), orderBy('createdAt', 'desc'));
-  return onSnapshot(q, (snapshot) => {
-    const orders = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-      // Handle server timestamp if it's still pending
-      createdAt: doc.data().createdAt?.toDate() || new Date() 
-    }));
-    callback(orders);
-  });
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      callback(
+        snapshot.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+          createdAt: d.data().createdAt?.toDate?.() || new Date(),
+        })),
+      );
+    },
+    (error) => {
+      console.error('subscribeToOrders error:', error);
+      onError?.(error);
+    },
+  );
+}
+
+export function subscribeToSingleOrder(orderId, callback, onError) {
+  if (!isFirebaseConfigured) {
+    demo.orderSubs.add(callback);
+    emitOrder(orderId);
+    return () => demo.orderSubs.delete(callback);
+  }
+  return onSnapshot(
+    doc(db, 'orders', orderId),
+    (snap) => {
+      if (snap.exists()) {
+        callback({
+          id: snap.id,
+          ...snap.data(),
+          createdAt: snap.data().createdAt?.toDate?.() || new Date(),
+        });
+      } else {
+        callback(null);
+      }
+    },
+    (error) => {
+      console.error('subscribeToSingleOrder error:', error);
+      onError?.(error);
+    },
+  );
 }
 
 export async function updateOrderStatus(orderId, newStatus) {
-  if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY) {
-    console.warn("Firebase not configured. Mocking status update.");
+  if (!isFirebaseConfigured) {
+    const order = demo.orders.find((o) => o.id === orderId);
+    if (order) {
+      order.status = newStatus;
+      emitOrders();
+      emitOrder(orderId);
+    }
     return;
   }
-  const orderRef = doc(db, 'orders', orderId);
-  await updateDoc(orderRef, { status: newStatus });
+  await updateDoc(doc(db, 'orders', orderId), { status: newStatus });
 }
 
-export function subscribeToSingleOrder(orderId, callback) {
-  if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY) {
-    console.warn("Firebase not configured. Mocking single order subscription.");
-    return () => {};
-  }
-  const orderRef = doc(db, 'orders', orderId);
-  return onSnapshot(orderRef, (doc) => {
-    if (doc.exists()) {
-      callback({ id: doc.id, ...doc.data() });
-    }
-  });
-}
-
-// Mock Data
-function getMockMenu() {
-  return [
-    { id: '1', name: 'Espresso', price: 15000, category: 'Coffee', description: 'Strong and pure coffee', image: 'https://images.unsplash.com/photo-1510707577719-ae7c14805e3a?auto=format&fit=crop&w=300&q=80' },
-    { id: '2', name: 'Latte', price: 25000, category: 'Coffee', description: 'Espresso with steamed milk', image: 'https://images.unsplash.com/photo-1570968915860-54d5c301fa9f?auto=format&fit=crop&w=300&q=80' },
-    { id: '3', name: 'Croissant', price: 20000, category: 'Food', description: 'Buttery flaky pastry', image: 'https://images.unsplash.com/photo-1555507036-ab1f4038808a?auto=format&fit=crop&w=300&q=80' },
-  ];
-}
+export { isFirebaseConfigured };

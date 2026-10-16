@@ -1,108 +1,390 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { db } from '@/lib/firebase';
-import { collection, getDocs, addDoc, deleteDoc, doc, updateDoc } from 'firebase/firestore';
+import Image from 'next/image';
+import Icon from '@/components/Icon';
+import { ToastProvider, useToast } from '@/components/Toast';
+import {
+  subscribeToMenu,
+  addMenuItem,
+  updateMenuItem,
+  deleteMenuItem,
+  isFirebaseConfigured,
+} from '@/lib/db';
+import { DEFAULT_CATEGORIES } from '@/lib/constants';
+import { formatCurrency } from '@/lib/format';
 
-export default function MenuManagement() {
+const EMPTY = {
+  name: '',
+  price: '',
+  category: DEFAULT_CATEGORIES[0],
+  description: '',
+  image: '',
+  popular: false,
+};
+
+function MenuManager() {
+  const toast = useToast();
   const [menu, setMenu] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [isEditing, setIsEditing] = useState(null);
-  const [formData, setFormData] = useState({ name: '', price: '', description: '', category: 'Food', image: '' });
+  const [loadError, setLoadError] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState(EMPTY);
+  const [saving, setSaving] = useState(false);
+  const [q, setQ] = useState('');
 
-  const loadMenu = async () => {
-    if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY) {
-      alert("Demo Mode: Firebase belum dikonfigurasi. Data tidak tersimpan.");
-      setLoading(false);
+  useEffect(() => {
+    const unsub = subscribeToMenu(
+      (data) => {
+        setMenu(data);
+        setLoading(false);
+        setLoadError(false);
+      },
+      () => {
+        setLoading(false);
+        setLoadError(true);
+      },
+    );
+    return () => unsub?.();
+  }, []);
+
+  const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+
+  const reset = () => {
+    setForm(EMPTY);
+    setEditingId(null);
+  };
+
+  const startEdit = (item) => {
+    setEditingId(item.id);
+    setForm({
+      name: item.name || '',
+      price: String(item.price ?? ''),
+      category: item.category || DEFAULT_CATEGORIES[0],
+      description: item.description || '',
+      image: item.image || '',
+      popular: Boolean(item.popular),
+    });
+    if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const save = async (e) => {
+    e.preventDefault();
+    if (!form.name.trim() || form.price === '') {
+      toast.error('Nama dan harga wajib diisi');
       return;
     }
-    const snapshot = await getDocs(collection(db, 'menu'));
-    setMenu(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
-    setLoading(false);
-  };
-
-  useEffect(() => { loadMenu(); }, []);
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY) return;
-    
-    const dataToSave = { ...formData, price: Number(formData.price) };
-    if (isEditing) {
-      await updateDoc(doc(db, 'menu', isEditing), dataToSave);
-    } else {
-      await addDoc(collection(db, 'menu'), dataToSave);
-    }
-    setFormData({ name: '', price: '', description: '', category: 'Food', image: '' });
-    setIsEditing(null);
-    loadMenu();
-  };
-
-  const handleDelete = async (id) => {
-    if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY) return;
-    if (confirm('Hapus menu ini?')) {
-      await deleteDoc(doc(db, 'menu', id));
-      loadMenu();
+    setSaving(true);
+    const payload = {
+      name: form.name.trim(),
+      price: Number(form.price),
+      category: form.category,
+      description: form.description.trim(),
+      image: form.image.trim(),
+      popular: form.popular,
+    };
+    try {
+      if (editingId) {
+        await updateMenuItem(editingId, payload);
+        toast.success('Menu diperbarui');
+      } else {
+        await addMenuItem(payload);
+        toast.success('Menu ditambahkan');
+      }
+      reset();
+    } catch {
+      toast.error('Gagal menyimpan menu');
+    } finally {
+      setSaving(false);
     }
   };
 
-  const editItem = (item) => {
-    setIsEditing(item.id);
-    setFormData({ name: item.name, price: item.price, description: item.description, category: item.category, image: item.image || '' });
+  const remove = async (item) => {
+    if (!window.confirm(`Hapus "${item.name}"?`)) return;
+    try {
+      await deleteMenuItem(item.id);
+      toast.success('Menu dihapus');
+    } catch {
+      toast.error('Gagal menghapus menu');
+    }
   };
 
-  if (loading) return <p>Loading...</p>;
+  const filtered = menu.filter((m) =>
+    m.name?.toLowerCase().includes(q.trim().toLowerCase()),
+  );
 
   return (
-    <div className="container animate-fade-in">
-      <div className="flex-header" style={{ marginBottom: '2rem' }}>
-        <h1 className="title">Kelola Menu</h1>
-        <button className="btn-secondary" onClick={() => window.location.href = '/admin'}>Kembali ke Dashboard</button>
+    <>
+      <div className="row between gap-3 wrap" style={{ marginBottom: 20 }}>
+        <div className="stack gap-1">
+          <h1 className="h2">Kelola Menu</h1>
+          <p className="muted small">{menu.length} menu terdaftar.</p>
+        </div>
+        {!isFirebaseConfigured ? (
+          <span className="pill" style={{ color: 'var(--warning)', borderColor: 'var(--warning-bg)' }}>
+            <Icon name="alert" size={14} />
+            Mode Demo — perubahan tidak tersimpan permanen
+          </span>
+        ) : null}
       </div>
 
-      <div className="card" style={{ padding: '2rem', marginBottom: '2rem' }}>
-        <h2 className="subtitle">{isEditing ? 'Edit Menu' : 'Tambah Menu Baru'}</h2>
-        <form onSubmit={handleSubmit} className="responsive-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-          <div className="input-group">
-            <label className="input-label">Nama Menu</label>
-            <input className="input-field" required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+      {/* Form */}
+      <form
+        onSubmit={save}
+        className="card card-pad stack gap-3"
+        style={{ marginBottom: 26 }}
+      >
+        <div className="row between gap-2">
+          <h2 className="h3">{editingId ? 'Edit Menu' : 'Tambah Menu Baru'}</h2>
+          {editingId ? (
+            <button type="button" className="btn btn-quiet btn-sm" onClick={reset}>
+              <Icon name="close" size={15} />
+              Batal
+            </button>
+          ) : null}
+        </div>
+
+        <div
+          className="responsive-grid"
+          style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr', gap: 14 }}
+        >
+          <div className="field" style={{ marginBottom: 0 }}>
+            <label className="label" htmlFor="m-name">Nama Menu</label>
+            <input
+              id="m-name"
+              className="input"
+              placeholder="Misal: Kopi Susu Gula Aren"
+              value={form.name}
+              onChange={(e) => set({ name: e.target.value })}
+              required
+            />
           </div>
-          <div className="input-group">
-            <label className="input-label">Harga (Rp)</label>
-            <input type="number" className="input-field" required value={formData.price} onChange={e => setFormData({...formData, price: e.target.value})} />
+          <div className="field" style={{ marginBottom: 0 }}>
+            <label className="label" htmlFor="m-price">Harga (Rp)</label>
+            <input
+              id="m-price"
+              className="input"
+              type="number"
+              min="0"
+              placeholder="25000"
+              value={form.price}
+              onChange={(e) => set({ price: e.target.value })}
+              required
+            />
           </div>
-          <div className="input-group" style={{ gridColumn: '1 / -1' }}>
-            <label className="input-label">Deskripsi</label>
-            <input className="input-field" value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} />
+          <div className="field" style={{ marginBottom: 0 }}>
+            <label className="label" htmlFor="m-cat">Kategori</label>
+            <select
+              id="m-cat"
+              className="select"
+              value={form.category}
+              onChange={(e) => set({ category: e.target.value })}
+            >
+              {DEFAULT_CATEGORIES.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
           </div>
-          <div className="input-group" style={{ gridColumn: '1 / -1' }}>
-            <label className="input-label">URL Gambar</label>
-            <input className="input-field" placeholder="https://..." value={formData.image} onChange={e => setFormData({...formData, image: e.target.value})} />
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>
-              Upload gambar Anda ke situs gratis seperti <a href="https://postimages.org/" target="_blank" rel="noreferrer" style={{color: 'var(--accent-color)', textDecoration: 'underline'}}>Postimages</a> lalu tempelkan link (Direct Link) nya ke sini.
-            </p>
+        </div>
+
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label className="label" htmlFor="m-desc">Deskripsi</label>
+          <textarea
+            id="m-desc"
+            className="textarea"
+            placeholder="Deskripsi singkat yang menggoda…"
+            value={form.description}
+            onChange={(e) => set({ description: e.target.value })}
+          />
+        </div>
+
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label className="label" htmlFor="m-img">URL Gambar</label>
+          <input
+            id="m-img"
+            className="input"
+            placeholder="https://…"
+            value={form.image}
+            onChange={(e) => set({ image: e.target.value })}
+          />
+          <span className="tiny faint">
+            Tempel link gambar langsung (mis. dari Postimages/Imgur).
+          </span>
+        </div>
+
+        <div className="row between gap-3 wrap">
+          <label className="row gap-2" style={{ cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={form.popular}
+              onChange={(e) => set({ popular: e.target.checked })}
+              style={{ width: 18, height: 18, accentColor: 'var(--brand)' }}
+            />
+            <span className="small" style={{ fontWeight: 600 }}>
+              Tandai sebagai favorit
+            </span>
+          </label>
+
+          <div className="row gap-2">
+            {form.image ? (
+              <span
+                style={{
+                  position: 'relative',
+                  width: 44,
+                  height: 44,
+                  borderRadius: 10,
+                  overflow: 'hidden',
+                  border: '1px solid var(--line)',
+                }}
+              >
+                <Image src={form.image} alt="Pratinjau" fill style={{ objectFit: 'cover' }} sizes="44px" />
+              </span>
+            ) : null}
+            <button type="submit" className="btn btn-primary" disabled={saving}>
+              {saving ? (
+                <>
+                  <span className="spinner" /> Menyimpan…
+                </>
+              ) : (
+                <>
+                  <Icon name="check" size={16} strokeWidth={2.6} />
+                  {editingId ? 'Simpan Perubahan' : 'Tambah Menu'}
+                </>
+              )}
+            </button>
           </div>
-          <div style={{ gridColumn: '1 / -1', display: 'flex', gap: '1rem' }}>
-            <button type="submit" className="btn-primary">{isEditing ? 'Simpan Perubahan' : 'Tambah Menu'}</button>
-            {isEditing && <button type="button" className="btn-secondary" onClick={() => { setIsEditing(null); setFormData({name: '', price: '', description: '', category: 'Food', image: ''}); }}>Batal</button>}
-          </div>
-        </form>
+        </div>
+      </form>
+
+      {/* Daftar */}
+      <div className="row between gap-2" style={{ marginBottom: 14 }}>
+        <h2 className="h3">Daftar Menu</h2>
+        <div style={{ position: 'relative', maxWidth: 240, flex: 1 }}>
+          <Icon
+            name="search"
+            size={17}
+            style={{
+              position: 'absolute',
+              left: 12,
+              top: '50%',
+              transform: 'translateY(-50%)',
+              color: 'var(--ink-3)',
+            }}
+          />
+          <input
+            className="input"
+            placeholder="Cari…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            style={{ paddingLeft: 38, padding: '9px 12px 9px 38px' }}
+          />
+        </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '1rem' }}>
-        {menu.map(item => (
-          <div key={item.id} className="card" style={{ padding: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <div style={{ fontWeight: 600 }}>{item.name}</div>
-              <div style={{ color: 'var(--text-secondary)' }}>Rp {item.price.toLocaleString('id-ID')}</div>
+      {loading ? (
+        <div className="stack gap-2">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="skeleton" style={{ height: 68 }} />
+          ))}
+        </div>
+      ) : loadError ? (
+        <div
+          className="card card-pad stack gap-3 text-center"
+          style={{ alignItems: 'center', padding: 40, borderColor: 'var(--warning-bg)' }}
+        >
+          <Icon name="alert" size={34} style={{ color: 'var(--warning)' }} />
+          <h2 className="h3">Gagal memuat menu</h2>
+          <p className="muted small" style={{ maxWidth: 420 }}>
+            Tidak dapat terhubung ke database. Periksa koneksi internet dan
+            konfigurasi Firebase.
+          </p>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => window.location.reload()}
+          >
+            <Icon name="refresh" size={16} />
+            Muat Ulang
+          </button>
+        </div>
+      ) : filtered.length === 0 ? (
+        <div
+          className="card"
+          style={{ padding: 40, textAlign: 'center', borderStyle: 'dashed', background: 'transparent', boxShadow: 'none' }}
+        >
+          <p className="muted">Belum ada menu. Tambahkan menu pertama di atas.</p>
+        </div>
+      ) : (
+        <div className="stack gap-2">
+          {filtered.map((item) => (
+            <div
+              key={item.id}
+              className="card row gap-3"
+              style={{ padding: 12, alignItems: 'center' }}
+            >
+              <span
+                style={{
+                  position: 'relative',
+                  width: 54,
+                  height: 54,
+                  borderRadius: 12,
+                  overflow: 'hidden',
+                  background: 'var(--brand-soft)',
+                  flexShrink: 0,
+                }}
+              >
+                {item.image ? (
+                  <Image src={item.image} alt={item.name} fill style={{ objectFit: 'cover' }} sizes="54px" />
+                ) : (
+                  <span className="row" style={{ height: '100%', justifyContent: 'center', color: 'var(--brand)' }}>
+                    <Icon name="coffee" size={22} />
+                  </span>
+                )}
+              </span>
+
+              <div className="stack gap-1 grow" style={{ minWidth: 0 }}>
+                <div className="row gap-2 wrap">
+                  <span style={{ fontWeight: 700 }}>{item.name}</span>
+                  {item.popular ? <span className="badge badge-warning">Favorit</span> : null}
+                </div>
+                <span className="small muted">
+                  {item.category} · {formatCurrency(item.price)}
+                </span>
+              </div>
+
+              <div className="row gap-1">
+                <button
+                  type="button"
+                  className="btn btn-quiet btn-icon"
+                  onClick={() => startEdit(item)}
+                  aria-label={`Edit ${item.name}`}
+                >
+                  <Icon name="edit" size={17} />
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-quiet btn-icon"
+                  onClick={() => remove(item)}
+                  aria-label={`Hapus ${item.name}`}
+                  style={{ color: 'var(--danger)' }}
+                >
+                  <Icon name="trash" size={17} />
+                </button>
+              </div>
             </div>
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button onClick={() => editItem(item)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>✏️</button>
-              <button onClick={() => handleDelete(item.id)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>🗑️</button>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+export default function AdminMenuPage() {
+  return (
+    <ToastProvider>
+      <MenuManager />
+    </ToastProvider>
   );
 }

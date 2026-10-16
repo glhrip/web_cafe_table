@@ -1,50 +1,111 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import Brand from '@/components/Brand';
+import Icon from '@/components/Icon';
+import { CAFE_TAGLINE } from '@/lib/constants';
 
-export default function Home() {
+const QUICK_TABLES = [1, 2, 3, 4, 5, 6];
+
+export default function LandingPage() {
   const router = useRouter();
   const [tableNo, setTableNo] = useState('');
 
-  const handleGo = (e) => {
+  const go = (value) => {
+    const n = String(value).trim();
+    if (n) router.push(`/table/${n}`);
+  };
+
+  const handleSubmit = (e) => {
     e.preventDefault();
-    if (tableNo.trim()) {
-      router.push(`/table/${tableNo}`);
-    }
+    go(tableNo);
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', textAlign: 'center' }}>
-      <div className="card animate-fade-in" style={{ padding: '3rem', maxWidth: '400px', width: '100%' }}>
-        <h1 className="title" style={{ color: 'var(--accent-color)', fontSize: '2rem' }}>Web POS Cafe</h1>
-        <p className="subtitle">Scan QR di meja Anda atau masukkan nomor meja di bawah ini.</p>
-        
-        <form onSubmit={handleGo} className="input-group" style={{ marginTop: '2rem' }}>
-          <input 
-            type="number" 
-            placeholder="Nomor Meja" 
-            className="input-field" 
-            value={tableNo}
-            onChange={(e) => setTableNo(e.target.value)}
-            style={{ textAlign: 'center', fontSize: '1.2rem', marginBottom: '1rem' }}
-            required
-            min="1"
-          />
-          <button type="submit" className="btn-primary" style={{ width: '100%', fontSize: '1.1rem' }}>
+    <div className="page-center">
+      <div
+        className="stack gap-4 fade-up"
+        style={{ width: '100%', maxWidth: 460, alignItems: 'center' }}
+      >
+        <Brand href={null} subtitle="Pesan langsung dari meja" size="lg" />
+
+        <div className="stack gap-2 text-center" style={{ marginTop: 4 }}>
+          <span className="eyebrow">Selamat datang</span>
+          <h1 className="display">Pesan tanpa antre</h1>
+          <p className="muted" style={{ maxWidth: 360, margin: '0 auto' }}>
+            {CAFE_TAGLINE}. Scan QR di meja atau masukkan nomor meja untuk mulai
+            memesan.
+          </p>
+        </div>
+
+        <form
+          onSubmit={handleSubmit}
+          className="card card-pad stack gap-3"
+          style={{ width: '100%', marginTop: 4 }}
+        >
+          <div className="field" style={{ marginBottom: 0 }}>
+            <label className="label" htmlFor="table-no">
+              Nomor Meja
+            </label>
+            <div style={{ position: 'relative' }}>
+              <Icon
+                name="qr"
+                size={20}
+                style={{
+                  position: 'absolute',
+                  left: 14,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  color: 'var(--ink-3)',
+                }}
+              />
+              <input
+                id="table-no"
+                className="input"
+                type="number"
+                inputMode="numeric"
+                min="1"
+                placeholder="Contoh: 7"
+                value={tableNo}
+                onChange={(e) => setTableNo(e.target.value)}
+                style={{ paddingLeft: 44, fontSize: '1.15rem', fontWeight: 650 }}
+                required
+              />
+            </div>
+          </div>
+
+          <button type="submit" className="btn btn-primary btn-block btn-lg">
+            <Icon name="coffee" size={19} />
             Lihat Menu
           </button>
+
+          <div className="stack gap-2">
+            <span className="tiny faint text-center">Meja populer</span>
+            <div className="row gap-2 wrap" style={{ justifyContent: 'center' }}>
+              {QUICK_TABLES.map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  className="pill"
+                  onClick={() => go(n)}
+                  style={{ minWidth: 44, justifyContent: 'center' }}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
         </form>
 
-        <div style={{ marginTop: '3rem' }}>
-          <button 
-            type="button" 
-            className="btn-secondary" 
-            onClick={() => router.push('/admin')}
-          >
-            Masuk sebagai Admin
-          </button>
-        </div>
+        <button
+          type="button"
+          className="btn btn-quiet"
+          onClick={() => router.push('/admin')}
+        >
+          <Icon name="lock" size={16} />
+          Masuk sebagai Admin
+        </button>
       </div>
     </div>
   );

@@ -10,8 +10,20 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
-// Initialize Firebase
-const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
-const db = getFirestore(app);
+/**
+ * Kalau API key belum diisi, aplikasi otomatis jalan di "mode demo"
+ * memakai data mock in-memory (lihat lib/db.js).
+ */
+export const isFirebaseConfigured = Boolean(
+  process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+);
+
+let app = null;
+let db = null;
+
+if (isFirebaseConfigured) {
+  app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+  db = getFirestore(app);
+}
 
 export { app, db };

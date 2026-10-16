@@ -1,18 +1,39 @@
+import { Fraunces, Inter } from 'next/font/google';
+import { CAFE_NAME, CAFE_TAGLINE } from '@/lib/constants';
 import './globals.css';
 
+const display = Fraunces({
+  subsets: ['latin'],
+  weight: ['600', '700'],
+  display: 'swap',
+  variable: '--font-display',
+});
+
+const body = Inter({
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-body',
+});
+
 export const metadata = {
-  title: 'Web POS Cafe',
-  description: 'Scan, Order, and Enjoy',
+  title: {
+    default: `${CAFE_NAME} · Pesan dari Meja`,
+    template: `%s · ${CAFE_NAME}`,
+  },
+  description: CAFE_TAGLINE,
+  applicationName: CAFE_NAME,
+};
+
+export const viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  themeColor: '#f7f3ee',
 };
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="id">
-      <body>
-        <main className="container">
-          {children}
-        </main>
-      </body>
+    <html lang="id" className={`${display.variable} ${body.variable}`}>
+      <body>{children}</body>
     </html>
   );
 }

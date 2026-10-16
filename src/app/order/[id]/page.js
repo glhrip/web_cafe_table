@@ -1,101 +1,229 @@
 'use client';
 
-import { useEffect, useState, use } from 'react';
+import { use, useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
+import CustomerHeader from '@/components/CustomerHeader';
+import OrderProgress from '@/components/OrderProgress';
+import OrderSummary from '@/components/OrderSummary';
+import StatusBadge from '@/components/StatusBadge';
+import Confetti from '@/components/Confetti';
+import Icon from '@/components/Icon';
+import { ToastProvider } from '@/components/Toast';
 import { subscribeToSingleOrder } from '@/lib/db';
+import { ORDER_STATUS, PAYMENT_LABEL, STATUS_META } from '@/lib/constants';
+import { formatDateTime, shortId } from '@/lib/format';
 
-export default function OrderTracking({ params }) {
-  const resolvedParams = use(params);
-  const orderId = resolvedParams.id;
+const TONE_ICON = {
+  warning: 'clock',
+  info: 'chef',
+  success: 'bag',
+  neutral: 'check',
+  danger: 'alert',
+};
+
+function OrderScreen({ orderId }) {
   const [order, setOrder] = useState(null);
+  const [notFound, setNotFound] = useState(false);
+  const [celebrate, setCelebrate] = useState(false);
+  const prevStatus = useRef(null);
 
   useEffect(() => {
-    const unsubscribe = subscribeToSingleOrder(orderId, (data) => {
-      setOrder(data);
-    });
-    return () => unsubscribe();
+    const unsub = subscribeToSingleOrder(
+      orderId,
+      (data) => {
+        if (data) {
+          setOrder(data);
+          setNotFound(false);
+        } else {
+          setNotFound(true);
+        }
+      },
+      () => setNotFound(true),
+    );
+    return () => unsub?.();
   }, [orderId]);
 
-  if (!order) {
+  // Picu confetti sekali saat berubah menjadi "siap diambil".
+  useEffect(() => {
+    if (
+      order?.status === ORDER_STATUS.READY &&
+      prevStatus.current !== ORDER_STATUS.READY
+    ) {
+      setCelebrate(true);
+    }
+    if (order) prevStatus.current = order.status;
+  }, [order]);
+
+  if (notFound) {
     return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh' }}>
-        <p>Memuat status pesanan...</p>
-      </div>
+      <>
+        <CustomerHeader />
+        <main className="shell shell-narrow page">
+          <div
+            className="card card-pad stack gap-3 text-center"
+            style={{ alignItems: 'center', padding: 48 }}
+          >
+            <Icon name="alert" size={38} style={{ color: 'var(--warning)' }} />
+            <h1 className="h2">Pesanan tidak ditemukan</h1>
+            <p className="muted small">
+              Pastikan tautan benar, atau buat pesanan baru dari meja Anda.
+            </p>
+            <Link href="/" className="btn btn-primary">
+              Kembali ke Beranda
+            </Link>
+          </div>
+        </main>
+      </>
     );
   }
 
-  const steps = [
-    { id: 'pending', label: 'Menunggu', icon: '⏳' },
-    { id: 'preparing', label: 'Disiapkan', icon: '🍳' },
-    { id: 'ready', label: 'Siap Diambil', icon: '🎉' },
-    { id: 'completed', label: 'Selesai', icon: '✅' },
-  ];
+  if (!order) {
+    return (
+      <>
+        <CustomerHeader />
+        <main className="shell shell-narrow page stack gap-4">
+          <div className="skeleton" style={{ height: 96 }} />
+          <div className="skeleton" style={{ height: 260 }} />
+        </main>
+      </>
+    );
+  }
 
-  const currentStepIndex = steps.findIndex(s => s.id === order.status);
-  
+  const meta = STATUS_META[order.status] || STATUS_META.pending;
+  const isCancelled = order.status === ORDER_STATUS.CANCELLED;
+  const isDone = order.status === ORDER_STATUS.COMPLETED;
+
   return (
-    <div className="container animate-fade-in" style={{ paddingBottom: '2rem' }}>
-      <header style={{ textAlign: 'center', margin: '2rem 0' }}>
-        <h1 className="title">Status Pesanan</h1>
-        <p className="subtitle">ID: {orderId.substring(0, 8).toUpperCase()}</p>
-      </header>
+    <>
+      <Confetti fire={celebrate} />
+      <CustomerHeader tableId={order.tableNo} />
 
-      <div className="card" style={{ padding: '2rem', marginBottom: '2rem' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2rem', position: 'relative' }}>
-          {/* Progress Line */}
-          <div style={{ position: 'absolute', top: '24px', left: '10%', right: '10%', height: '4px', backgroundColor: 'var(--border-color)', zIndex: 1 }} />
-          <div style={{ position: 'absolute', top: '24px', left: '10%', right: '10%', height: '4px', backgroundColor: 'var(--accent-color)', zIndex: 2, width: `${(Math.max(0, currentStepIndex) / (steps.length - 1)) * 100}%`, transition: 'width 0.5s ease' }} />
-
-          {steps.map((step, index) => {
-            const isCompleted = index <= currentStepIndex;
-            const isCurrent = index === currentStepIndex;
-            return (
-              <div key={step.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', zIndex: 3, width: '80px' }}>
-                <div style={{ 
-                  width: '48px', height: '48px', borderRadius: '50%', 
-                  backgroundColor: isCompleted ? 'var(--accent-color)' : 'var(--card-bg)', 
-                  border: `4px solid ${isCompleted ? 'var(--accent-color)' : 'var(--border-color)'}`,
-                  display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '1.5rem',
-                  transition: 'all 0.3s ease',
-                  boxShadow: isCurrent ? '0 0 0 4px rgba(209, 143, 80, 0.3)' : 'none'
-                }}>
-                  {step.icon}
-                </div>
-                <span className="progress-step-text" style={{ fontSize: '0.8rem', marginTop: '0.5rem', fontWeight: isCurrent ? 700 : 500, color: isCurrent ? 'var(--text-primary)' : 'var(--text-secondary)', textAlign: 'center' }}>
-                  {step.label}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-
-        {order.status === 'ready' && (
-          <div style={{ backgroundColor: 'rgba(16, 185, 129, 0.1)', padding: '1.5rem', borderRadius: 'var(--radius-md)', textAlign: 'center', marginBottom: '2rem', border: '1px solid #10b981' }}>
-            <h2 style={{ color: '#10b981', marginBottom: '0.5rem' }}>Pesanan Siap!</h2>
-            <p style={{ fontWeight: 600 }}>Halo {order.customerName}, silakan ambil pesanan Anda di kasir sekarang.</p>
-          </div>
-        )}
-
-        {order.status === 'pending' && (
-          <div style={{ backgroundColor: 'rgba(245, 158, 11, 0.1)', padding: '1.5rem', borderRadius: 'var(--radius-md)', textAlign: 'center', marginBottom: '2rem', border: '1px solid #f59e0b' }}>
-            <h2 style={{ color: '#d97706', marginBottom: '0.5rem' }}>Menunggu Konfirmasi Pembayaran</h2>
-            <p>Silakan menuju kasir untuk melakukan pembayaran dengan QRIS / Tunai.</p>
-          </div>
-        )}
-
-        <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '1.5rem' }}>
-          <h3 style={{ marginBottom: '1rem', fontSize: '1.1rem' }}>Rincian</h3>
-          {order.items.map((item, idx) => (
-            <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-              <span>{item.qty}x {item.name}</span>
-              <span>Rp {(item.price * item.qty).toLocaleString('id-ID')}</span>
+      <main className="shell shell-narrow page stack gap-4">
+        <section
+          className="card card-pad fade-up"
+          style={{
+            background: `linear-gradient(135deg, var(--${meta.tone}-bg), var(--surface) 65%)`,
+          }}
+        >
+          <div className="row between gap-3 wrap" style={{ marginBottom: 20 }}>
+            <div className="stack gap-1">
+              <span className="eyebrow">Status Pesanan</span>
+              <h1 className="h2">{meta.label}</h1>
+              <span className="small faint mono">
+                #{shortId(order.id)} · Meja {order.tableNo}
+              </span>
             </div>
-          ))}
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1rem', paddingTop: '1rem', borderTop: '1px dashed var(--border-color)', fontWeight: 700, fontSize: '1.2rem' }}>
-            <span>Total</span>
-            <span style={{ color: 'var(--accent-color)' }}>Rp {order.total?.toLocaleString('id-ID')}</span>
+            <StatusBadge status={order.status} full />
           </div>
-        </div>
-      </div>
-    </div>
+
+          {!isCancelled ? <OrderProgress status={order.status} /> : null}
+
+          <div
+            className="row gap-3"
+            style={{
+              marginTop: 22,
+              padding: 16,
+              background: 'var(--surface)',
+              border: '1px solid var(--line)',
+              borderRadius: 'var(--r-md)',
+            }}
+          >
+            <span
+              className="row"
+              style={{
+                width: 42,
+                height: 42,
+                borderRadius: '50%',
+                background: `var(--${meta.tone}-bg)`,
+                color: `var(--${meta.tone})`,
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}
+            >
+              <Icon name={TONE_ICON[meta.tone]} size={22} strokeWidth={2.3} />
+            </span>
+            <div className="stack gap-1">
+              <span style={{ fontWeight: 700 }}>
+                {order.status === ORDER_STATUS.PENDING &&
+                  'Menunggu konfirmasi kasir'}
+                {order.status === ORDER_STATUS.PREPARING &&
+                  'Pesananmu sedang disiapkan'}
+                {order.status === ORDER_STATUS.READY &&
+                  `Siap diambil, ${order.customerName}!`}
+                {order.status === ORDER_STATUS.COMPLETED &&
+                  'Terima kasih sudah memesan'}
+                {isCancelled && 'Pesanan dibatalkan'}
+              </span>
+              <span className="small muted">
+                {order.status === ORDER_STATUS.PENDING &&
+                  'Selesaikan pembayaran, lalu kasir akan memproses pesananmu.'}
+                {order.status === ORDER_STATUS.PREPARING &&
+                  'Barista kami sedang meracik pesananmu. Mohon tunggu sebentar.'}
+                {order.status === ORDER_STATUS.READY &&
+                  'Silakan ambil pesananmu di kasir sekarang.'}
+                {order.status === ORDER_STATUS.COMPLETED &&
+                  'Kami tunggu kunjungan berikutnya! ☕'}
+                {isCancelled &&
+                  'Hubungi kasir bila ini tidak sesuai. Terima kasih.'}
+              </span>
+            </div>
+          </div>
+        </section>
+
+        <section className="card card-pad">
+          <div className="row between gap-2" style={{ marginBottom: 16 }}>
+            <h2 className="h3">Rincian Pesanan</h2>
+            <span className="pill">
+              <Icon name="wallet" size={14} />
+              {PAYMENT_LABEL[order.paymentMethod] || 'Kasir'}
+            </span>
+          </div>
+
+          <div
+            className="row between gap-3 wrap"
+            style={{ marginBottom: 14 }}
+          >
+            <div className="stack gap-1">
+              <span className="tiny faint">Nama</span>
+              <span style={{ fontWeight: 650 }}>{order.customerName}</span>
+            </div>
+            <div className="stack gap-1">
+              <span className="tiny faint">No. HP</span>
+              <span style={{ fontWeight: 650 }}>{order.customerPhone}</span>
+            </div>
+            <div className="stack gap-1">
+              <span className="tiny faint">Waktu</span>
+              <span style={{ fontWeight: 650 }}>
+                {formatDateTime(order.createdAt)}
+              </span>
+            </div>
+          </div>
+
+          <hr className="divider" style={{ marginBottom: 4 }} />
+
+          <OrderSummary order={order} />
+        </section>
+
+        {isDone || isCancelled ? (
+          <Link href={`/table/${order.tableNo}`} className="btn btn-primary btn-block btn-lg">
+            <Icon name="refresh" size={18} />
+            Pesan Lagi
+          </Link>
+        ) : (
+          <p className="small faint text-center">
+            Halaman ini diperbarui otomatis. Tidak perlu refresh.
+          </p>
+        )}
+      </main>
+    </>
+  );
+}
+
+export default function OrderTrackingPage({ params }) {
+  const { id } = use(params);
+  return (
+    <ToastProvider>
+      <OrderScreen orderId={id} />
+    </ToastProvider>
   );
 }

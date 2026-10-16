@@ -1,209 +1,327 @@
 'use client';
 
-import { useEffect, useState, use } from 'react';
+import { use, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import CustomerHeader from '@/components/CustomerHeader';
+import MenuCard from '@/components/MenuCard';
+import MenuSkeleton from '@/components/MenuSkeleton';
+import CartBar from '@/components/CartBar';
+import CartSheet from '@/components/CartSheet';
+import Icon from '@/components/Icon';
+import { ToastProvider, useToast } from '@/components/Toast';
 import { getMenuItems, createOrder } from '@/lib/db';
+import { formatCurrency } from '@/lib/format';
+import { CAFE_TAGLINE } from '@/lib/constants';
 
-export default function TableMenu({ params }) {
-  // In Next.js 15, page params is a promise, but for client components we can use the `use` hook or just destructure if we treat it as sync.
-  // Actually, Next.js 13+ params in client components might be a promise in newer versions. We'll use React.use() to unwrap.
-  const resolvedParams = use(params);
-  const tableId = resolvedParams.id;
+const ALL = '__all__';
+
+function MenuScreen({ tableId }) {
   const router = useRouter();
-  
+  const toast = useToast();
+
   const [menu, setMenu] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [cart, setCart] = useState({}); // { itemId: quantity }
+  const [loadError, setLoadError] = useState(false);
+  const [cart, setCart] = useState({});
+  const [activeCat, setActiveCat] = useState(ALL);
+  const [query, setQuery] = useState('');
   const [showCart, setShowCart] = useState(false);
-  
-  const [customerName, setCustomerName] = useState('');
-  const [customerPhone, setCustomerPhone] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState('kasir');
   const [submitting, setSubmitting] = useState(false);
+  const [lastOrder, setLastOrder] = useState(null);
 
+  // Muat menu + pulihkan keranjang tersimpan.
   useEffect(() => {
-    async function loadMenu() {
-      try {
-        const items = await getMenuItems();
-        setMenu(items);
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadMenu();
+    let alive = true;
+    getMenuItems()
+      .then((items) => {
+        if (alive) setMenu(items);
+      })
+      .catch(() => {
+        if (alive) setLoadError(true);
+      })
+      .finally(() => alive && setLoading(false));
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const addToCart = (item) => {
-    setCart(prev => ({ ...prev, [item.id]: (prev[item.id] || 0) + 1 }));
-  };
+  useEffect(() => {
+    try {
+      const savedCart = localStorage.getItem(`cart:${tableId}`);
+      if (savedCart) setCart(JSON.parse(savedCart));
+      const savedOrder = localStorage.getItem(`order:${tableId}`);
+      if (savedOrder) setLastOrder(savedOrder);
+    } catch {
+      /* ignore */
+    }
+  }, [tableId]);
 
-  const removeFromCart = (item) => {
-    setCart(prev => {
-      const newCart = { ...prev };
-      if (newCart[item.id] > 1) {
-        newCart[item.id] -= 1;
-      } else {
-        delete newCart[item.id];
-      }
-      return newCart;
+  useEffect(() => {
+    try {
+      localStorage.setItem(`cart:${tableId}`, JSON.stringify(cart));
+    } catch {
+      /* ignore */
+    }
+  }, [cart, tableId]);
+
+  const categories = useMemo(() => {
+    const set = new Set(menu.map((m) => m.category).filter(Boolean));
+    return [ALL, ...Array.from(set)];
+  }, [menu]);
+
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return menu.filter((m) => {
+      const catOk = activeCat === ALL || m.category === activeCat;
+      const qOk =
+        !q ||
+        m.name?.toLowerCase().includes(q) ||
+        m.description?.toLowerCase().includes(q);
+      return catOk && qOk;
     });
-  };
+  }, [menu, activeCat, query]);
 
-  const cartTotal = Object.entries(cart).reduce((total, [itemId, qty]) => {
-    const item = menu.find(i => i.id === itemId);
-    return total + (item?.price || 0) * qty;
-  }, 0);
+  const add = (item) =>
+    setCart((prev) => ({ ...prev, [item.id]: (prev[item.id] || 0) + 1 }));
 
-  const cartItemCount = Object.values(cart).reduce((sum, qty) => sum + qty, 0);
+  const remove = (item) =>
+    setCart((prev) => {
+      const next = { ...prev };
+      if (next[item.id] > 1) next[item.id] -= 1;
+      else delete next[item.id];
+      return next;
+    });
 
-  const handleSubmitOrder = async (e) => {
-    e.preventDefault();
-    if (cartItemCount === 0) return;
-    
+  const cartLines = useMemo(
+    () =>
+      Object.entries(cart)
+        .map(([id, qty]) => {
+          const item = menu.find((m) => m.id === id);
+          return item ? { ...item, qty } : null;
+        })
+        .filter(Boolean),
+    [cart, menu],
+  );
+
+  const total = cartLines.reduce((s, it) => s + it.price * it.qty, 0);
+  const count = cartLines.reduce((s, it) => s + it.qty, 0);
+
+  const submit = async ({ name, phone, payment }) => {
     setSubmitting(true);
     try {
-      const orderItems = Object.entries(cart).map(([itemId, qty]) => {
-        const item = menu.find(i => i.id === itemId);
-        return {
-          id: item.id,
-          name: item.name,
-          price: item.price,
-          qty: qty
-        };
-      });
-
       const orderData = {
         tableNo: tableId,
-        customerName,
-        customerPhone,
-        paymentMethod,
-        items: orderItems,
-        total: cartTotal,
+        customerName: name,
+        customerPhone: phone,
+        paymentMethod: payment,
+        items: cartLines.map((it) => ({
+          id: it.id,
+          name: it.name,
+          price: it.price,
+          qty: it.qty,
+        })),
+        total,
         status: 'pending',
       };
-
-      const docRef = await createOrder(orderData);
-      router.push(`/order/${docRef.id}`);
-    } catch (err) {
-      console.error(err);
-      alert('Gagal membuat pesanan. Coba lagi.');
+      const ref = await createOrder(orderData);
+      try {
+        localStorage.setItem(`order:${tableId}`, ref.id);
+        localStorage.removeItem(`cart:${tableId}`);
+      } catch {
+        /* ignore */
+      }
+      router.push(`/order/${ref.id}`);
+    } catch {
+      toast.error('Gagal membuat pesanan. Coba lagi.');
       setSubmitting(false);
     }
   };
 
-  if (loading) return <div style={{ padding: '2rem', textAlign: 'center' }}>Memuat menu...</div>;
-
   return (
-    <div style={{ paddingBottom: '80px' }} className="animate-fade-in">
-      <header className="flex-header" style={{ marginBottom: '2rem' }}>
-        <div>
-          <h1 className="title" style={{ marginBottom: 0 }}>Menu Kami</h1>
-          <p className="subtitle" style={{ marginBottom: 0 }}>Meja {tableId}</p>
-        </div>
-      </header>
+    <>
+      <CustomerHeader tableId={tableId} orderId={lastOrder} orderCount={count} />
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '1.5rem' }}>
-        {menu.map(item => (
-          <div key={item.id} className="card" style={{ display: 'flex', flexDirection: 'column' }}>
-            <div style={{ height: '200px', backgroundColor: '#e2d9d1', backgroundImage: `url(${item.image})`, backgroundSize: 'cover', backgroundPosition: 'center' }} />
-            <div style={{ padding: '1.25rem', flex: 1, display: 'flex', flexDirection: 'column' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
-                <h3 style={{ fontSize: '1.2rem', fontWeight: 600 }}>{item.name}</h3>
-                <span style={{ fontWeight: 700, color: 'var(--accent-color)' }}>Rp {item.price.toLocaleString('id-ID')}</span>
+      <main className="shell page">
+        {/* Hero */}
+        <section
+          className="card card-pad fade-up"
+          style={{
+            marginBottom: 24,
+            background:
+              'linear-gradient(135deg, var(--brand-tint), var(--surface) 60%)',
+            borderColor: 'var(--brand-soft)',
+          }}
+        >
+          <div className="row between gap-3 wrap">
+            <div className="stack gap-1">
+              <span className="eyebrow">Meja {tableId}</span>
+              <h1 className="h2">Selamat datang! 👋</h1>
+              <p className="muted small">
+                {CAFE_TAGLINE}. Pilih menu favoritmu di bawah ini.
+              </p>
+            </div>
+            <div
+              className="row gap-2"
+              style={{
+                background: 'var(--surface)',
+                border: '1px solid var(--line)',
+                borderRadius: 'var(--r-md)',
+                padding: '10px 14px',
+              }}
+            >
+              <Icon name="coffee" size={22} style={{ color: 'var(--brand)' }} />
+              <div className="stack">
+                <span className="tiny faint">Meja</span>
+                <span className="h3" style={{ lineHeight: 1 }}>
+                  {tableId}
+                </span>
               </div>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '1.5rem', flex: 1 }}>{item.description}</p>
-              
-              {cart[item.id] ? (
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', backgroundColor: 'var(--bg-color)', borderRadius: 'var(--radius-full)', padding: '0.25rem' }}>
-                  <button onClick={() => removeFromCart(item)} style={{ width: '36px', height: '36px', borderRadius: '50%', backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', fontSize: '1.2rem', fontWeight: 'bold' }}>-</button>
-                  <span style={{ fontWeight: 'bold' }}>{cart[item.id]}</span>
-                  <button onClick={() => addToCart(item)} style={{ width: '36px', height: '36px', borderRadius: '50%', backgroundColor: 'var(--accent-color)', color: 'white', fontSize: '1.2rem', fontWeight: 'bold' }}>+</button>
-                </div>
-              ) : (
-                <button className="btn-secondary" style={{ width: '100%' }} onClick={() => addToCart(item)}>
-                  Tambah
-                </button>
-              )}
             </div>
           </div>
-        ))}
-      </div>
+        </section>
 
-      {cartItemCount > 0 && (
-        <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, padding: '1rem', background: 'linear-gradient(transparent, var(--bg-color) 20%)', zIndex: 10 }}>
-          <div className="container" style={{ padding: 0 }}>
-            <button className="btn-primary" style={{ width: '100%', display: 'flex', justifyContent: 'space-between', padding: '1.25rem', fontSize: '1.1rem', boxShadow: 'var(--shadow-md)', border: 'none' }} onClick={() => setShowCart(true)}>
-              <span>{cartItemCount} Item</span>
-              <span>Pesan - Rp {cartTotal.toLocaleString('id-ID')}</span>
+        {/* Kontrol pencarian + kategori */}
+        <div className="stack gap-3" style={{ marginBottom: 22 }}>
+          <div style={{ position: 'relative' }}>
+            <Icon
+              name="search"
+              size={19}
+              style={{
+                position: 'absolute',
+                left: 14,
+                top: '50%',
+                transform: 'translateY(-50%)',
+                color: 'var(--ink-3)',
+              }}
+            />
+            <input
+              className="input"
+              placeholder="Cari menu…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              style={{ paddingLeft: 44 }}
+            />
+          </div>
+
+          {!loading && categories.length > 1 ? (
+            <div
+              className="row gap-2"
+              style={{ overflowX: 'auto', paddingBottom: 4 }}
+            >
+              {categories.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  className={`pill ${
+                    activeCat === c ? 'is-active' : ''
+                  }`}
+                  onClick={() => setActiveCat(c)}
+                  style={
+                    activeCat === c
+                      ? {
+                          background: 'var(--brand)',
+                          borderColor: 'var(--brand)',
+                          color: '#fff',
+                        }
+                      : undefined
+                  }
+                >
+                  {c === ALL ? 'Semua' : c}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+
+        {/* Grid menu */}
+        {loading ? (
+          <MenuSkeleton count={6} />
+        ) : loadError ? (
+          <div
+            className="card card-pad stack gap-2 text-center"
+            style={{ alignItems: 'center', padding: 48, borderColor: 'var(--warning-bg)' }}
+          >
+            <Icon name="alert" size={36} style={{ color: 'var(--warning)' }} />
+            <h3 className="h3">Gagal memuat menu</h3>
+            <p className="muted small">
+              Tidak dapat terhubung ke server. Periksa koneksi lalu coba lagi.
+            </p>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => window.location.reload()}
+            >
+              <Icon name="refresh" size={16} />
+              Coba Lagi
             </button>
           </div>
-        </div>
-      )}
-
-      {/* Cart Modal */}
-      {showCart && (
-        <div className="glass-panel" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 50, display: 'flex', justifyContent: 'center', alignItems: 'flex-end', animation: 'fadeIn 0.2s ease' }}>
-          <div className="card" style={{ width: '100%', maxWidth: '600px', maxHeight: '90vh', overflowY: 'auto', borderBottomLeftRadius: 0, borderBottomRightRadius: 0, padding: '2rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-              <h2 className="title" style={{ marginBottom: 0 }}>Detail Pesanan</h2>
-              <button onClick={() => setShowCart(false)} style={{ fontSize: '1.5rem', color: 'var(--text-secondary)' }}>&times;</button>
-            </div>
-
-            <div style={{ marginBottom: '2rem' }}>
-              {Object.entries(cart).map(([itemId, qty]) => {
-                const item = menu.find(i => i.id === itemId);
-                return (
-                  <div key={itemId} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.75rem 0', borderBottom: '1px solid var(--border-color)' }}>
-                    <div>
-                      <div style={{ fontWeight: 600 }}>{item.name}</div>
-                      <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>{qty} x Rp {item.price.toLocaleString('id-ID')}</div>
-                    </div>
-                    <div style={{ fontWeight: 600 }}>Rp {(item.price * qty).toLocaleString('id-ID')}</div>
-                  </div>
-                );
-              })}
-              <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '1rem', marginTop: '0.5rem', fontSize: '1.2rem', fontWeight: 700 }}>
-                <span>Total</span>
-                <span style={{ color: 'var(--accent-color)' }}>Rp {cartTotal.toLocaleString('id-ID')}</span>
-              </div>
-            </div>
-
-            <form onSubmit={handleSubmitOrder}>
-              <div className="input-group">
-                <label className="input-label">Nama Anda</label>
-                <input type="text" className="input-field" required value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Misal: Budi" />
-              </div>
-              <div className="input-group">
-                <label className="input-label">Nomor HP / WhatsApp</label>
-                <input type="tel" className="input-field" required value={customerPhone} onChange={e => setCustomerPhone(e.target.value)} placeholder="0812xxxxxx" />
-              </div>
-              <div className="input-group" style={{ marginBottom: '0.5rem' }}>
-                <label className="input-label">Metode Pembayaran</label>
-                <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                    <input type="radio" name="paymentMethod" value="kasir" checked={paymentMethod === 'kasir'} onChange={e => setPaymentMethod(e.target.value)} />
-                    Bayar di Kasir
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                    <input type="radio" name="paymentMethod" value="qris" checked={paymentMethod === 'qris'} onChange={e => setPaymentMethod(e.target.value)} />
-                    QRIS
-                  </label>
-                </div>
-              </div>
-              <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1.5rem', marginTop: '1rem' }}>
-                {paymentMethod === 'kasir' 
-                  ? 'Silakan lakukan pembayaran di kasir setelah mengkonfirmasi pesanan ini. Pesanan akan disiapkan setelah pembayaran berhasil.'
-                  : 'Harap selesaikan pembayaran via QRIS dan tunjukkan bukti ke kasir setelah mengkonfirmasi pesanan ini.'}
-              </p>
-              <button type="submit" className="btn-primary" style={{ width: '100%', padding: '1rem', fontSize: '1.1rem' }} disabled={submitting}>
-                {submitting ? 'Memproses...' : 'Konfirmasi Pesanan'}
-              </button>
-            </form>
+        ) : menu.length === 0 ? (
+          <div
+            className="card card-pad stack gap-2 text-center"
+            style={{ alignItems: 'center', padding: 48 }}
+          >
+            <Icon name="coffee" size={36} style={{ color: 'var(--ink-3)' }} />
+            <h3 className="h3">Menu belum tersedia</h3>
+            <p className="muted small">
+              Mohon maaf, menu sedang diperbarui. Silakan tanya kasir kami.
+            </p>
           </div>
-        </div>
-      )}
-    </div>
+        ) : visible.length === 0 ? (
+          <div
+            className="card card-pad stack gap-2 text-center"
+            style={{ alignItems: 'center', padding: 48 }}
+          >
+            <Icon name="search" size={34} style={{ color: 'var(--ink-3)' }} />
+            <h3 className="h3">Menu tidak ditemukan</h3>
+            <p className="muted small">
+              Coba kata kunci lain atau pilih kategori berbeda.
+            </p>
+          </div>
+        ) : (
+          <div
+            className="stagger"
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))',
+              gap: 20,
+            }}
+          >
+            {visible.map((item) => (
+              <MenuCard
+                key={item.id}
+                item={item}
+                qty={cart[item.id] || 0}
+                onAdd={add}
+                onRemove={remove}
+              />
+            ))}
+          </div>
+        )}
+      </main>
+
+      <CartBar count={count} total={total} onOpen={() => setShowCart(true)} />
+
+      {showCart ? (
+        <CartSheet
+          items={cartLines}
+          total={total}
+          submitting={submitting}
+          onClose={() => setShowCart(false)}
+          onAdd={add}
+          onRemove={remove}
+          onSubmit={submit}
+        />
+      ) : null}
+    </>
+  );
+}
+
+export default function TableMenuPage({ params }) {
+  const { id } = use(params);
+  return (
+    <ToastProvider>
+      <MenuScreen tableId={id} />
+    </ToastProvider>
   );
 }

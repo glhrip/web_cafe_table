@@ -1,110 +1,197 @@
 'use client';
 
 import { useState } from 'react';
+import { QRCodeSVG } from 'qrcode.react';
+import Icon from '@/components/Icon';
+import { ToastProvider } from '@/components/Toast';
+import { CAFE_NAME } from '@/lib/constants';
 
-export default function QRGenerator() {
+function QRGenerator() {
   const [baseUrl, setBaseUrl] = useState('');
-  const [tableCount, setTableCount] = useState(10);
-  const [showQR, setShowQR] = useState(false);
+  const [count, setCount] = useState(10);
+  const [generated, setGenerated] = useState('');
 
-  const tables = Array.from({ length: tableCount }, (_, i) => i + 1);
-
-  const handleGenerate = (e) => {
+  const build = (e) => {
     e.preventDefault();
-    if (!baseUrl.startsWith('http')) {
-      alert('Masukkan URL yang valid (dimulai dengan http:// atau https://)');
-      return;
-    }
-    // Remove trailing slash if any
-    const cleanUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-    setBaseUrl(cleanUrl);
-    setShowQR(true);
+    const clean = baseUrl.trim().replace(/\/+$/, '');
+    if (!/^https?:\/\//.test(clean)) return;
+    setGenerated(clean);
   };
 
+  const tables = Array.from({ length: count }, (_, i) => i + 1);
+  const preview = generated ? `${generated}/table/1` : 'https://cafe-anda.vercel.app/table/1';
+
   return (
-    <div className="container animate-fade-in" style={{ paddingBottom: '2rem' }}>
-      
-      {/* Hide controls when printing */}
-      <style dangerouslySetInnerHTML={{__html: `
+    <>
+      <style>{`
         @media print {
           .no-print { display: none !important; }
-          .print-grid { 
-            display: grid !important; 
-            grid-template-columns: repeat(3, 1fr) !important; 
-            gap: 20px !important; 
-            page-break-inside: avoid;
-          }
-          .qr-card { border: 1px solid #ccc; padding: 1rem; text-align: center; break-inside: avoid; }
+          body { background: #fff !important; }
+          .shell { max-width: none !important; padding: 0 !important; }
+          .qr-grid { display: grid !important; grid-template-columns: repeat(3, 1fr) !important; gap: 16px !important; }
+          .qr-tile { border: 1px solid #ddd !important; break-inside: avoid; box-shadow: none !important; }
         }
-      `}} />
+      `}</style>
 
-      <div className="no-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
-        <h1 className="title">Cetak QR Code Meja</h1>
-        <button className="btn-secondary" onClick={() => window.location.href = '/admin'}>Kembali ke Dashboard</button>
+      <div className="no-print row between gap-3 wrap" style={{ marginBottom: 20 }}>
+        <div className="stack gap-1">
+          <h1 className="h2">QR Code Meja</h1>
+          <p className="muted small">
+            Buat QR untuk setiap meja, lalu cetak dan tempel.
+          </p>
+        </div>
+        {generated ? (
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => window.print()}
+          >
+            <Icon name="printer" size={17} />
+            Cetak Semua
+          </button>
+        ) : null}
       </div>
 
-      <div className="card no-print" style={{ padding: '2rem', marginBottom: '2rem' }}>
-        <p className="subtitle" style={{ marginBottom: '1.5rem' }}>
-          Masukkan alamat website cafe Anda (setelah di-online-kan), lalu tentukan jumlah meja. 
-          Sistem akan membuatkan QR Code untuk setiap meja yang bisa langsung Anda cetak.
-        </p>
-
-        <form onSubmit={handleGenerate} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: '1rem', alignItems: 'flex-end' }}>
-          <div className="input-group" style={{ marginBottom: 0 }}>
-            <label className="input-label">Alamat Website Utama</label>
-            <input 
-              type="url" 
-              className="input-field" 
-              placeholder="https://cafe-anda.vercel.app" 
-              required 
+      {/* Panel kontrol */}
+      <form
+        onSubmit={build}
+        className="card card-pad no-print stack gap-3"
+        style={{ marginBottom: 26 }}
+      >
+        <div className="row gap-3 wrap" style={{ alignItems: 'flex-end' }}>
+          <div className="field grow" style={{ marginBottom: 0, minWidth: 240 }}>
+            <label className="label" htmlFor="base-url">
+              Alamat Website Cafe
+            </label>
+            <input
+              id="base-url"
+              className="input"
+              type="url"
+              placeholder="https://cafe-anda.vercel.app"
               value={baseUrl}
-              onChange={e => setBaseUrl(e.target.value)}
+              onChange={(e) => setBaseUrl(e.target.value)}
+              required
             />
           </div>
-          <div className="input-group" style={{ marginBottom: 0 }}>
-            <label className="input-label">Jumlah Meja</label>
-            <input 
-              type="number" 
-              className="input-field" 
-              min="1" 
-              max="100" 
-              required 
-              value={tableCount}
-              onChange={e => setTableCount(Number(e.target.value))}
-              style={{ width: '120px' }}
+          <div className="field" style={{ marginBottom: 0, width: 130 }}>
+            <label className="label" htmlFor="count">
+              Jumlah Meja
+            </label>
+            <input
+              id="count"
+              className="input"
+              type="number"
+              min="1"
+              max="100"
+              value={count}
+              onChange={(e) => setCount(Math.min(100, Math.max(1, Number(e.target.value) || 1)))}
+              required
             />
           </div>
-          <button type="submit" className="btn-primary" style={{ padding: '0.75rem 1.5rem' }}>Buat QR</button>
-        </form>
-      </div>
+          <button type="submit" className="btn btn-primary" style={{ height: 46 }}>
+            <Icon name="qr" size={17} />
+            Buat QR
+          </button>
+        </div>
+        <p className="tiny faint">
+          Tips: gunakan alamat produksi (mis. Vercel) agar QR bisa dipindai
+          pelanggan dari HP mereka.
+        </p>
+      </form>
 
-      {showQR && (
+      {generated ? (
         <>
-          <div className="no-print" style={{ textAlign: 'center', marginBottom: '2rem' }}>
-            <button className="btn-primary" onClick={() => window.print()} style={{ fontSize: '1.2rem', padding: '1rem 2rem' }}>
-              🖨️ Cetak Semua QR Code Sekarang
-            </button>
-            <p style={{ marginTop: '1rem', color: 'var(--text-secondary)' }}>Tekan tombol cetak, lalu gunting dan tempel di fisik meja.</p>
+          <div
+            className="no-print card row gap-3 card-pad"
+            style={{ marginBottom: 26, alignItems: 'center', background: 'var(--brand-tint)', borderColor: 'var(--brand-soft)' }}
+          >
+            <span
+              className="row"
+              style={{
+                width: 72,
+                height: 72,
+                background: '#fff',
+                borderRadius: 12,
+                padding: 6,
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}
+            >
+              <QRCodeSVG value={preview} size={60} level="M" />
+            </span>
+            <div className="stack gap-1">
+              <span className="eyebrow">Pratinjau</span>
+              <span style={{ fontWeight: 700 }}>{CAFE_NAME}</span>
+              <span className="small muted" style={{ wordBreak: 'break-all' }}>
+                {preview}
+              </span>
+            </div>
           </div>
 
-          <div className="print-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1.5rem' }}>
-            {tables.map(num => {
-              const url = `${baseUrl}/table/${num}`;
-              const qrApi = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(url)}`;
-              
+          <div
+            className="qr-grid"
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))',
+              gap: 18,
+            }}
+          >
+            {tables.map((num) => {
+              const url = `${generated}/table/${num}`;
               return (
-                <div key={num} className="card qr-card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-                  <h2 style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>Meja {num}</h2>
-                  <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1rem', textAlign: 'center' }}>Scan untuk pesan</p>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={qrApi} alt={`QR Meja ${num}`} style={{ width: '100%', maxWidth: '150px', height: 'auto', marginBottom: '1rem' }} />
-                  <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', wordBreak: 'break-all' }}>{url}</p>
+                <div
+                  key={num}
+                  className="card qr-tile stack gap-2"
+                  style={{ padding: 18, alignItems: 'center', textAlign: 'center' }}
+                >
+                  <span className="eyebrow" style={{ color: 'var(--ink-3)' }}>
+                    {CAFE_NAME}
+                  </span>
+                  <span className="h3" style={{ fontSize: '1.35rem' }}>
+                    Meja {num}
+                  </span>
+                  <span
+                    className="row"
+                    style={{
+                      background: '#fff',
+                      padding: 8,
+                      borderRadius: 12,
+                      border: '1px solid var(--line)',
+                    }}
+                  >
+                    <QRCodeSVG value={url} size={150} level="M" includeMargin={false} />
+                  </span>
+                  <span className="tiny faint">Scan untuk pesan</span>
+                  <span
+                    className="tiny faint"
+                    style={{ wordBreak: 'break-all', lineHeight: 1.3 }}
+                  >
+                    {url}
+                  </span>
                 </div>
               );
             })}
           </div>
         </>
+      ) : (
+        <div
+          className="card no-print"
+          style={{ padding: 44, textAlign: 'center', borderStyle: 'dashed', background: 'transparent', boxShadow: 'none' }}
+        >
+          <Icon name="qr" size={38} style={{ color: 'var(--ink-3)', margin: '0 auto 10px' }} />
+          <p className="muted">
+            Masukkan alamat website, lalu tekan <strong>Buat QR</strong>.
+          </p>
+        </div>
       )}
-    </div>
+    </>
+  );
+}
+
+export default function AdminQRPage() {
+  return (
+    <ToastProvider>
+      <QRGenerator />
+    </ToastProvider>
   );
 }
