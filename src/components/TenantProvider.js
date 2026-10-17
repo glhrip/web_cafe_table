@@ -35,10 +35,11 @@ function Center({ children }) {
  */
 export default function TenantProvider({ slug, children }) {
   const [tenant, setTenant] = useState(null);
+  // Saat slug berubah, komponen ini di-remount lewat key di bawah, jadi
+  // status awal cukup 'loading' dan tidak perlu di-set ulang di effect.
   const [state, setState] = useState('loading'); // loading | ready | missing | error
 
   useEffect(() => {
-    setState('loading');
     const unsub = subscribeToTenant(
       slug,
       (data) => {

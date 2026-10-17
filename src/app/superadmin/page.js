@@ -13,6 +13,12 @@ import {
 } from '@/lib/tenants';
 import { BRAND_PRESETS, buildPalette } from '@/lib/theme';
 import { PLATFORM_NAME } from '@/lib/constants';
+import {
+  isAuthConfigured,
+  subscribeToAuth,
+  loginReseller,
+  isReseller,
+} from '@/lib/auth';
 
 const EMPTY = {
   name: '',
@@ -316,7 +322,9 @@ function Console() {
             className="card card-pad text-center"
             style={{ padding: 44, borderStyle: 'dashed', background: 'transparent', boxShadow: 'none' }}
           >
-            <p className="muted">Belum ada cafe. Klik "Tambah Cafe" untuk memulai.</p>
+            <p className="muted">
+              Belum ada cafe. Klik &ldquo;Tambah Cafe&rdquo; untuk memulai.
+            </p>
           </div>
         ) : (
           <div
@@ -419,10 +427,130 @@ function Console() {
   );
 }
 
+/** Gerbang login reseller (email + password, claim `reseller`). */
+function ResellerGate() {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setBusy(true);
+    try {
+      await loginReseller(email, password);
+      // onAuthStateChanged di wrapper akan menampilkan Console.
+    } catch (err) {
+      setError(
+        err?.code === 'auth/invalid-credential'
+          ? 'Email atau kata sandi salah.'
+          : err?.message || 'Gagal masuk.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="page-center">
+      <form
+        onSubmit={submit}
+        className="card card-pad stack gap-3 fade-up"
+        style={{ width: '100%', maxWidth: 380 }}
+      >
+        <div className="stack gap-2" style={{ alignItems: 'center', textAlign: 'center' }}>
+          <span
+            className="row"
+            style={{
+              width: 58,
+              height: 58,
+              borderRadius: '50%',
+              background: 'var(--brand-soft)',
+              color: 'var(--brand-strong)',
+              justifyContent: 'center',
+            }}
+          >
+            <Icon name="lock" size={26} />
+          </span>
+          <h1 className="h2">Panel Reseller</h1>
+          <p className="muted small">Masuk dengan akun reseller untuk mengelola cafe.</p>
+        </div>
+
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label className="label" htmlFor="r-email">Email</label>
+          <input
+            id="r-email"
+            className="input"
+            type="email"
+            autoComplete="username"
+            value={email}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              setError('');
+            }}
+            required
+          />
+        </div>
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label className="label" htmlFor="r-pass">Kata Sandi</label>
+          <input
+            id="r-pass"
+            className="input"
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => {
+              setPassword(e.target.value);
+              setError('');
+            }}
+            required
+          />
+          {error ? (
+            <span className="small" style={{ color: 'var(--danger)' }}>
+              {error}
+            </span>
+          ) : null}
+        </div>
+
+        <button type="submit" className="btn btn-primary btn-block btn-lg" disabled={busy}>
+          {busy ? <span className="spinner" /> : 'Masuk'}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function ResellerConsole() {
+  // Mode demo: tanpa backend, panel dibuka bebas (bukan model keamanan).
+  const [ready, setReady] = useState(!isAuthConfigured);
+  const [allowed, setAllowed] = useState(!isAuthConfigured);
+
+  useEffect(() => {
+    if (!isAuthConfigured) return () => {};
+    const unsub = subscribeToAuth((session) => {
+      setAllowed(isReseller(session?.claims));
+      setReady(true);
+    });
+    return () => unsub?.();
+  }, []);
+
+  if (!ready) {
+    return (
+      <div className="page-center">
+        <span className="spinner spinner-dark" />
+      </div>
+    );
+  }
+
+  if (!allowed) return <ResellerGate />;
+  return <Console />;
+}
+
 export default function SuperAdminPage() {
   return (
     <ToastProvider>
-      <Console />
+      <ResellerConsole />
     </ToastProvider>
   );
 }

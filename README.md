@@ -30,8 +30,11 @@ npm run dev
 
 - **Tanpa `.env.local`** → otomatis **mode demo**: 3 cafe contoh (Kopi Senja,
   Matcha House, Kopi Biru Laut) dengan menu contoh, semua data in-memory.
-  Perubahan tidak tersimpan permanen. PIN admin: `1234`.
-- **Dengan `.env.local`** → memakai Firebase asli (data tersimpan permanen).
+  Perubahan tidak tersimpan permanen. PIN admin: `1234`. Panel `/superadmin`
+  terbuka bebas. **Hanya untuk presentasi.**
+- **Dengan `.env.local`** → memakai Firebase asli: Auth (admin/reseller),
+  Firestore (data tersimpan permanen), dan Cloud Functions (validasi order).
+  Lihat **[SECURITY.md](./SECURITY.md)** untuk model otorisasi & setup claim.
 
 Isi `.env.local` (lihat `.env.local.example`):
 
@@ -47,13 +50,24 @@ NEXT_PUBLIC_FIREBASE_APP_ID=...
 ## Struktur data (Firebase)
 
 ```
-tenants/{slug}                    → { name, tagline, logo, theme, pin, status }
+tenants/{slug}                    → { name, tagline, logo, theme, owner, status }
 tenants/{slug}/menu/{itemId}      → { name, price, category, description, image, popular }
 tenants/{slug}/orders/{orderId}   → { tableNo, customerName, items, total, status, createdAt }
 ```
 
-Aturan keamanan ada di `firestore.rules` (baca catatan penting di dalamnya —
-PIN bukan pengganti Firebase Auth untuk produksi).
+**Keamanan:** `firestore.rules` menegakkan Auth + custom claim (bukan PIN).
+Pesanan pelanggan dibuat lewat Cloud Function `createOrder` di `functions/`
+yang **menghitung ulang harga/total di server**. Setup lengkap ada di
+**[SECURITY.md](./SECURITY.md)**.
+
+```bash
+# Jalankan emulator Firestore/Auth/Functions untuk uji lokal
+npm run emulators
+
+# Deploy rules & functions
+npm run deploy:rules
+npm run deploy:functions
+```
 
 ## Kustomisasi branding
 
@@ -85,10 +99,21 @@ src/
   lib/
     tenants.js                  # CRUD cafe (tenant)
     db.js                       # Menu & pesanan per-tenant
+    auth.js                     # Firebase Auth + custom claim admin/reseller
     theme.js                    # Util warna & palet
-    constants.js                # Status, kategori, konfigurasi
+    constants.js                # Status, kategori, state machine transisi
     firebase.js, mock-data.js, format.js
+functions/                      # Cloud Functions (validasi order server-side)
+  index.js                      # createOrder (hitung total), setAdminRole
+  scripts/set-claims.js         # Bootstrap claim lewat CLI
+firestore.rules                 # Aturan keamanan (Auth + claim)
 ```
+
+### Catatan build (Turbopack)
+
+Next.js 16.2.9 + Turbopack punya bug pada `next/font/google`, sehingga
+`npm run build` memakai webpack (`next build --webpack`). Tersedia juga
+`npm run build:turbo` bila ingin mencoba Turbopack saat sudah diperbaiki.
 
 ## Menambah cafe baru
 

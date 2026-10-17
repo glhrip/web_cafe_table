@@ -10,5 +10,11 @@ import TenantProvider from '@/components/TenantProvider';
  */
 export default function TenantLayout({ children, params }) {
   const { slug } = use(params);
-  return <TenantProvider slug={slug}>{children}</TenantProvider>;
+  // key={slug} memaksa remount saat berpindah cafe sehingga status
+  // "loading" di TenantProvider selalu mulai dari kondisi bersih.
+  return (
+    <TenantProvider key={slug} slug={slug}>
+      {children}
+    </TenantProvider>
+  );
 }

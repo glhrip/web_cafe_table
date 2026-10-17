@@ -4,54 +4,76 @@ rules_version = '2';
 // CafeQR — Firestore Security Rules (multi-tenant / white-label)
 //
 // Struktur data:
-//   tenants/{slug}                      → profil cafe (nama, logo, tema, PIN)
+//   tenants/{slug}                      → profil cafe (nama, logo, tema)
 //   tenants/{slug}/menu/{itemId}        → menu cafe
 //   tenants/{slug}/orders/{orderId}     → pesanan cafe
 //
-// CATATAN PENTING:
-// PIN admin di sini hanya untuk membuka UI. Karena app memakai Firebase
-// client SDK tanpa Firebase Auth, siapa pun yang punya config bisa menulis
-// langsung. Untuk produksi sungguhan, WAJIB pasang Firebase Auth (custom
-// claims per cafe) dan batasi tulis hanya ke admin cafe terkait.
+// MODEL OTORISASI (custom claims Firebase Auth):
+//   reseller: true          → boleh membuat/mengubah/menghapus tenant
+//   admin_<slug>: true      → boleh mengelola menu & status pesanan <slug>
+//   slug: "<slug>"          → slug tenant yang diadmini (kenyamanan UI)
 //
-// Aturan di bawah ini adalah versi "siap demo": baca bebas, tulis bebas
-// untuk field pesanan pelanggan, tapi field sensitif tenant dijaga.
+// CATATAN: PIN tidak lagi menjadi pengamanan. Keamanan ditegakkan di sini
+// berbasis Auth + claim. Pesanan pelanggan DIBUAT lewat Cloud Function
+// `createOrder` (Admin SDK → bypass rules), sehingga client tidak bisa
+// memalsukan harga/total.
 // ===========================================================================
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // ---- Helper -----------------------------------------------------------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isReseller() {
+      return isSignedIn() && request.auth.token.reseller == true;
+    }
+
+    function isAdminOf(slug) {
+      return isSignedIn()
+        && (
+          request.auth.token.reseller == true
+          || request.auth.token['admin_' + slug] == true
+        );
+    }
+
     // ---- Tenant profile ---------------------------------------------------
     match /tenants/{slug} {
-      // Siapa pun boleh membaca profil (untuk menampilkan branding).
+      // Profil dibaca bebas (branding publik).
       allow read: if true;
 
-      // Pembuatan/penghapusan cafe dibatasi ke pemanggil terautentikasi.
-      // (Saat ini reseller memakai panel /superadmin — ganti ke cek custom
-      // claim, mis. request.auth.token.role == 'reseller', di produksi.)
-      allow create: if true;
-      allow delete: if false; // hindari penghapusan tak sengaja dari client
+      // Hanya reseller yang boleh membuat/menghapus cafe.
+      allow create: if isReseller();
+      allow delete: if isReseller();
 
-      // Update branding: hanya field yang aman.
-      allow update: if request.resource.data.diff(resource.data).affectedKeys()
-        .hasOnly(['name', 'tagline', 'logo', 'theme', 'pin', 'owner', 'status']);
+      // Update branding hanya oleh admin cafe terkait / reseller,
+      // dan hanya field yang diizinkan.
+      allow update: if isAdminOf(slug)
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['name', 'tagline', 'logo', 'theme', 'owner', 'status']);
 
       // ---- Menu -----------------------------------------------------------
       match /menu/{itemId} {
         allow read: if true;
-        allow write: if isValidMenuItem();
+        // Hanya admin cafe terkait yang boleh mengubah menu.
+        allow write: if isAdminOf(slug) && isValidMenuItem();
       }
 
       // ---- Orders ---------------------------------------------------------
       match /orders/{orderId} {
         allow read: if true;
 
-        // Pelanggan boleh MEMBUAT pesanan baru dengan bentuk data yang benar.
-        allow create: if isValidOrder();
+        // Pesanan pelanggan dibuat HANYA via Cloud Function (Admin SDK).
+        // Dari client TIDAK diizinkan sama sekali.
+        allow create: if false;
 
-        // Update hanya untuk mengubah status (dipakai dashboard admin).
-        allow update: if request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['status']) && isValidStatus(request.resource.data.status);
+        // Update status hanya oleh admin cafe terkait, dan hanya field
+        // `status` dengan transisi yang sah (state machine).
+        allow update: if isAdminOf(slug)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+          && isAllowedStatus(resource.data.status, request.resource.data.status);
 
         allow delete: if false;
       }
@@ -59,8 +81,18 @@ service cloud.firestore {
 
     // ---- Validasi ---------------------------------------------------------
 
-    function isValidStatus(s) {
+    function isKnownStatus(s) {
       return s in ['pending', 'preparing', 'ready', 'completed', 'cancelled'];
+    }
+
+    // State machine: status akhir tidak berubah; alur maju satu langkah.
+    function isAllowedStatus(from, to) {
+      return isKnownStatus(to)
+        && (
+          (from == 'pending'   && (to == 'preparing' || to == 'cancelled'))
+          || (from == 'preparing' && (to == 'ready'      || to == 'cancelled'))
+          || (from == 'ready'     && (to == 'completed'))
+        );
     }
 
     function isValidMenuItem() {
@@ -71,20 +103,6 @@ service cloud.firestore {
         && d.price is number
         && d.price >= 0
         && d.price < 100000000;
-    }
-
-    function isValidOrder() {
-      let d = request.resource.data;
-      return d.tableNo is string
-        && d.tableNo.size() > 0
-        && d.customerName is string
-        && d.customerName.size() > 0
-        && d.items is list
-        && d.items.size() > 0
-        && d.items.size() <= 100
-        && d.total is number
-        && d.total >= 0
-        && d.status == 'pending';
     }
   }
 }

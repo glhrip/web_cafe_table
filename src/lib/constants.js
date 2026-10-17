@@ -56,6 +56,39 @@ export const TRACK_STEPS = [
   ORDER_STATUS.COMPLETED,
 ];
 
+/**
+ * State machine transisi status pesanan yang SAH.
+ *
+ * Aturan:
+ * - Alur normal maju satu langkah: pending → preparing → ready → completed.
+ * - Dibatalkan hanya boleh dari pending/preparing (belum diserahkan).
+ * - Status akhir (completed/cancelled) tidak bisa diubah lagi.
+ *
+ * Dipakai oleh UI (menyembunyikan tombol tak sah) DAN divalidasi ulang di
+ * server (Cloud Function) sehingga tidak bisa dilewati dari client.
+ */
+export const STATUS_TRANSITIONS = {
+  [ORDER_STATUS.PENDING]: [ORDER_STATUS.PREPARING, ORDER_STATUS.CANCELLED],
+  [ORDER_STATUS.PREPARING]: [ORDER_STATUS.READY, ORDER_STATUS.CANCELLED],
+  [ORDER_STATUS.READY]: [ORDER_STATUS.COMPLETED],
+  [ORDER_STATUS.COMPLETED]: [],
+  [ORDER_STATUS.CANCELLED]: [],
+};
+
+/** Status yang dianggap final (tidak boleh berubah lagi). */
+export const TERMINAL_STATUSES = [ORDER_STATUS.COMPLETED, ORDER_STATUS.CANCELLED];
+
+/** Apakah transisi from → to diizinkan oleh state machine. */
+export function canTransition(from, to) {
+  if (!from || !to || from === to) return false;
+  return (STATUS_TRANSITIONS[from] || []).includes(to);
+}
+
+/** Daftar status berikutnya yang sah dari status saat ini. */
+export function nextStatuses(from) {
+  return STATUS_TRANSITIONS[from] || [];
+}
+
 export const PAYMENT_METHODS = [
   { id: 'kasir', label: 'Bayar di Kasir', hint: 'Bayar tunai/kartu di kasir' },
   { id: 'qris', label: 'QRIS', hint: 'Scan & bayar dari aplikasi bank/e-wallet' },

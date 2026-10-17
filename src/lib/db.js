@@ -1,5 +1,6 @@
-import { db, isFirebaseConfigured } from './firebase';
+import { db, isFirebaseConfigured, functions } from './firebase';
 import { MOCK_MENU } from './mock-data';
+import { canTransition } from './constants';
 import {
   collection,
   addDoc,
@@ -12,6 +13,7 @@ import {
   orderBy,
   serverTimestamp,
 } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
 
 /**
  * db.js — satu pintu akses data menu & pesanan, DIPISAH PER CAFE (tenant).
@@ -25,16 +27,119 @@ import {
  * jalan penuh saat presentasi.
  */
 
-const demo = {
-  data: {}, // tenantId -> { menu, orders }
-  menuSubs: new Map(), // tenantId -> Set(cb)
-  orderListSubs: new Map(),
-  orderOneSubs: new Map(),
-  seq: 0,
-};
+/**
+ * Demo store — dipakai saat tanpa Firebase.
+ *
+ * Dua masalah yang harus diatasi agar alur table → admin tetap jalan:
+ *
+ * 1. Di Next.js, tiap route/komponen bisa memuat modul ini sebagai instance
+ *    berbeda. Karena itu store disimpan di `globalThis`, bukan variabel modul,
+ *    supaya semua route dalam satu proses berbagi data yang sama.
+ *
+ * 2. Bila halaman table dan admin dibuka di TAB berbeda, memori masing-masing
+ *    tab terpisah. Untuk itu data demo juga dipersist ke `localStorage`, dan
+ *    perubahan disinkronkan lintas-tab lewat event `storage`.
+ *
+ * Catatan: mode demo memang hanya untuk presentasi — tanpa jaminan durability
+ * seperti database sungguhan.
+ */
+
+const DEMO_STORE_KEY = 'cafeqr:demo-store';
+
+function hasLocalStorage() {
+  try {
+    return typeof window !== 'undefined' && !!window.localStorage;
+  } catch {
+    return false;
+  }
+}
+
+function readPersisted() {
+  if (!hasLocalStorage()) return null;
+  try {
+    const raw = window.localStorage.getItem(DEMO_STORE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function persist(data, seq) {
+  if (!hasLocalStorage()) return;
+  try {
+    window.localStorage.setItem(
+      DEMO_STORE_KEY,
+      JSON.stringify({ data, seq }),
+    );
+  } catch {
+    /* kuota penuh / private mode — abaikan */
+  }
+}
+
+function createDemoStore() {
+  const persisted = readPersisted();
+  return {
+    data: persisted?.data || {}, // tenantId -> { menu, orders }
+    menuSubs: new Map(), // tenantId -> Set(cb)
+    orderListSubs: new Map(),
+    orderOneSubs: new Map(),
+    seq: persisted?.seq || 0,
+    hydrated: !!persisted,
+  };
+}
+
+const demo = (globalThis.__cafeqrDemoStore ||= createDemoStore());
+
+/** Simpan snapshot demo ke localStorage (tanpa data subscription). */
+function save() {
+  persist(demo.data, demo.seq);
+}
+
+// Sinkron lintas-tab: saat tab lain mengubah store, muat ulang & beri tahu.
+if (hasLocalStorage() && !demo.listening) {
+  demo.listening = true;
+  window.addEventListener('storage', (e) => {
+    if (e.key !== DEMO_STORE_KEY || !e.newValue) return;
+    try {
+      const parsed = JSON.parse(e.newValue);
+      demo.data = parsed.data || {};
+      demo.seq = parsed.seq || demo.seq;
+      Object.keys(demo.data).forEach((tenantId) => {
+        emitMenu(tenantId);
+        emitOrders(tenantId);
+        demo.data[tenantId].orders.forEach((o) => emitOrder(tenantId, o.id));
+      });
+    } catch {
+      /* abaikan payload rusak */
+    }
+  });
+}
 
 function tid(tenantId) {
   return tenantId || 'default';
+}
+
+/**
+ * Normalisasi pesanan demo supaya data lama (mis. dari localStorage versi
+ * sebelum patch) tetap konsisten: selalu punya status, items lengkap, total.
+ */
+function normalizeOrder(order, menu) {
+  const status = order.status || 'pending';
+  const items = (order.items || []).map((it) => {
+    if (it.name && typeof it.price === 'number') return it;
+    const found = menu.find((m) => m.id === it.id);
+    return {
+      id: it.id,
+      name: it.name || found?.name || 'Item',
+      price: typeof it.price === 'number' ? it.price : Number(found?.price) || 0,
+      qty: Number(it.qty) || 0,
+    };
+  });
+  const total =
+    typeof order.total === 'number' && order.total > 0
+      ? order.total
+      : items.reduce((s, it) => s + it.price * it.qty, 0);
+  return { ...order, status, items, total };
 }
 
 function bucket(tenantId) {
@@ -45,7 +150,11 @@ function bucket(tenantId) {
       orders: [],
     };
   }
-  return demo.data[id];
+  const b = demo.data[id];
+  if (b.orders.length) {
+    b.orders = b.orders.map((o) => normalizeOrder(o, b.menu));
+  }
+  return b;
 }
 
 function subs(map, tenantId) {
@@ -108,6 +217,7 @@ export async function addMenuItem(tenantId, data) {
     const item = { id: `demo-menu-${++demo.seq}`, ...data };
     bucket(tenantId).menu.push(item);
     emitMenu(tenantId);
+    save();
     return item;
   }
   const ref = await addDoc(
@@ -122,6 +232,7 @@ export async function updateMenuItem(tenantId, id, data) {
     const b = bucket(tenantId);
     b.menu = b.menu.map((m) => (m.id === id ? { ...m, ...data } : m));
     emitMenu(tenantId);
+    save();
     return;
   }
   await updateDoc(doc(db, 'tenants', tid(tenantId), 'menu', id), data);
@@ -132,6 +243,7 @@ export async function deleteMenuItem(tenantId, id) {
     const b = bucket(tenantId);
     b.menu = b.menu.filter((m) => m.id !== id);
     emitMenu(tenantId);
+    save();
     return;
   }
   await deleteDoc(doc(db, 'tenants', tid(tenantId), 'menu', id));
@@ -141,21 +253,67 @@ export async function deleteMenuItem(tenantId, id) {
 // Orders
 // ---------------------------------------------------------------------------
 
+/**
+ * Buat pesanan baru.
+ *
+ * PENTING: harga & total TIDAK dipercaya dari client. Saat Firebase aktif,
+ * pembuatan pesanan dirutekan lewat Cloud Function `createOrder` yang
+ * menghitung ulang total dari koleksi menu di server. `orderData` di sini
+ * hanya berisi niat pelanggan (meja, nama, daftar item + qty, metode bayar).
+ *
+ * Mode demo tetap menghitung di client karena tidak ada backend — itu wajar
+ * untuk presentasi, tapi bukan model keamanan produksi.
+ */
 export async function createOrder(tenantId, orderData) {
   if (!isFirebaseConfigured) {
+    // Mode demo meniru Cloud Function: harga & nama TIDAK dipercaya dari
+    // client. Halaman table hanya mengirim { id, qty }; di sini kita lengkapi
+    // dari menu di store demo, lalu hitung total.
+    const menu = bucket(tenantId).menu;
+    const items = (orderData.items || [])
+      .map((it) => {
+        const found = menu.find((m) => m.id === it.id);
+        if (!found) return null;
+        const qty = Number(it.qty) || 0;
+        return {
+          id: it.id,
+          name: found.name,
+          price: Number(found.price) || 0,
+          qty,
+        };
+      })
+      .filter(Boolean);
+
+    const total = items.reduce((s, it) => s + it.price * it.qty, 0);
+
     const id = `demo-order-${++demo.seq}`;
-    const order = { id, ...orderData, createdAt: new Date() };
+    const order = {
+      ...orderData,
+      items,
+      total,
+      status: 'pending',
+      createdAt: new Date(),
+      id,
+    };
     bucket(tenantId).orders.unshift(order);
     emitOrders(tenantId);
+    save();
     // Delay kecil supaya halaman tracking sempat ter-mount lebih dulu.
     setTimeout(() => emitOrder(tenantId, id), 300);
-    return { id };
+    return { id, total };
   }
-  const docRef = await addDoc(
-    collection(db, 'tenants', tid(tenantId), 'orders'),
-    { ...orderData, createdAt: serverTimestamp() },
-  );
-  return docRef;
+
+  const call = httpsCallable(functions, 'createOrder');
+  const { data } = await call({
+    tenantId: tid(tenantId),
+    tableNo: orderData.tableNo,
+    customerName: orderData.customerName,
+    customerPhone: orderData.customerPhone || '',
+    paymentMethod: orderData.paymentMethod || 'kasir',
+    // Kirim hanya id + qty; server yang mengambil harga asli dari menu.
+    items: (orderData.items || []).map((it) => ({ id: it.id, qty: it.qty })),
+  });
+  return { id: data.id, total: data.total };
 }
 
 export function subscribeToOrders(tenantId, callback, onError) {
@@ -212,13 +370,31 @@ export function subscribeToSingleOrder(tenantId, orderId, callback, onError) {
   );
 }
 
-export async function updateOrderStatus(tenantId, orderId, newStatus) {
+/**
+ * Ubah status pesanan dengan menegakkan state machine (constants.js).
+ *
+ * Guard di sini bersifat UX/awal; penegakan final ada di Firestore rules
+ * (admin) dan Cloud Function (create). Transisi tak sah melempar error
+ * supaya UI bisa memberi umpan balik.
+ */
+export async function updateOrderStatus(tenantId, orderId, newStatus, currentStatus) {
+  const current =
+    currentStatus ||
+    bucket(tenantId).orders.find((o) => o.id === orderId)?.status;
+
+  if (!canTransition(current, newStatus)) {
+    throw new Error(
+      `Transisi status tidak sah: ${current || '?'} → ${newStatus}`,
+    );
+  }
+
   if (!isFirebaseConfigured) {
     const order = bucket(tenantId).orders.find((o) => o.id === orderId);
     if (order) {
       order.status = newStatus;
       emitOrders(tenantId);
       emitOrder(tenantId, orderId);
+      save();
     }
     return;
   }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import Icon from '@/components/Icon';
 import { ToastProvider } from '@/components/Toast';
@@ -8,17 +8,15 @@ import { useTenant } from '@/components/TenantProvider';
 
 function QRGenerator() {
   const tenant = useTenant();
-  const [baseUrl, setBaseUrl] = useState('');
+  // Tebak alamat dari origin saat ini (client) tanpa effect — hindari
+  // setState sinkron di dalam effect.
+  const [baseUrl, setBaseUrl] = useState(() =>
+    typeof window === 'undefined'
+      ? ''
+      : `${window.location.origin}/c/${tenant.slug}`,
+  );
   const [count, setCount] = useState(10);
   const [generated, setGenerated] = useState('');
-
-  // Tebak alamat dari origin saat ini supaya tidak perlu ketik manual.
-  useEffect(() => {
-    if (typeof window !== 'undefined' && !baseUrl) {
-      setBaseUrl(`${window.location.origin}/c/${tenant.slug}`);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenant.slug]);
 
   const build = (e) => {
     e.preventDefault();

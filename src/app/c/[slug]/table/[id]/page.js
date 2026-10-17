@@ -19,18 +19,33 @@ function MenuScreen({ tableId }) {
   const toast = useToast();
   const tenant = useTenant();
 
+  const cartKey = `cart:${tenant.slug}:${tableId}`;
+  const orderKey = `order:${tenant.slug}:${tableId}`;
+
   const [menu, setMenu] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
-  const [cart, setCart] = useState({});
+  // Pulihkan keranjang & pesanan tersimpan secara sinkron (lazy init) supaya
+  // tidak perlu setState di dalam effect.
+  const [cart, setCart] = useState(() => {
+    try {
+      const saved = localStorage.getItem(cartKey);
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
   const [activeCat, setActiveCat] = useState(ALL);
   const [query, setQuery] = useState('');
   const [showCart, setShowCart] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [lastOrder, setLastOrder] = useState(null);
-
-  const cartKey = `cart:${tenant.slug}:${tableId}`;
-  const orderKey = `order:${tenant.slug}:${tableId}`;
+  const [lastOrder, setLastOrder] = useState(() => {
+    try {
+      return localStorage.getItem(orderKey);
+    } catch {
+      return null;
+    }
+  });
 
   // Muat menu tenant.
   useEffect(() => {
@@ -46,20 +61,7 @@ function MenuScreen({ tableId }) {
     return () => {
       alive = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenant.slug]);
-
-  // Pulihkan keranjang tersimpan.
-  useEffect(() => {
-    try {
-      const savedCart = localStorage.getItem(cartKey);
-      if (savedCart) setCart(JSON.parse(savedCart));
-      const savedOrder = localStorage.getItem(orderKey);
-      if (savedOrder) setLastOrder(savedOrder);
-    } catch {
-      /* ignore */
-    }
-  }, [cartKey, orderKey]);
 
   useEffect(() => {
     try {
@@ -114,19 +116,15 @@ function MenuScreen({ tableId }) {
   const submit = async ({ name, phone, payment }) => {
     setSubmitting(true);
     try {
+      // Kirim hanya id + qty. Harga & total dihitung di server (Cloud Function)
+      // sehingga tidak bisa dipalsukan dari sisi pelanggan. Mode demo tetap
+      // menghitung di client karena tidak ada backend.
       const orderData = {
         tableNo: tableId,
         customerName: name,
         customerPhone: phone,
         paymentMethod: payment,
-        items: cartLines.map((it) => ({
-          id: it.id,
-          name: it.name,
-          price: it.price,
-          qty: it.qty,
-        })),
-        total,
-        status: 'pending',
+        items: cartLines.map((it) => ({ id: it.id, qty: it.qty })),
       };
       const ref = await createOrder(tenant.slug, orderData);
       try {

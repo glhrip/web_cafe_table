@@ -7,7 +7,14 @@ import Brand from '@/components/Brand';
 import Icon from '@/components/Icon';
 import PinGate from './PinGate';
 import { useTenant } from '@/components/TenantProvider';
-import { adminAuthKey } from '@/lib/constants';
+import {
+  isAuthConfigured,
+  subscribeToAuth,
+  canAdminTenant,
+  logout,
+  demoAdminLogout,
+  demoAdminSession,
+} from '@/lib/auth';
 
 const NAV = [
   { href: '/admin', label: 'Pesanan', icon: 'receipt' },
@@ -17,41 +24,40 @@ const NAV = [
 ];
 
 /**
- * Kerangka dashboard admin satu cafe: gerbang PIN + header + navigasi tab.
- * Semua halaman /c/[slug]/admin/* memakai ini lewat layout-nya.
+ * Kerangka dashboard admin satu cafe: gerbang login + header + navigasi tab.
+ *
+ * Bila Firebase aktif, status login berasal dari Firebase Auth dan akses
+ * diverifikasi lewat custom claim admin_<slug>. Mode demo memakai flag
+ * sessionStorage (hanya UX, bukan keamanan).
  */
 export default function AdminShell({ children }) {
   const pathname = usePathname();
   const tenant = useTenant();
   const base = `/c/${tenant.slug}`;
-  const key = adminAuthKey(tenant.slug);
 
-  const [ready, setReady] = useState(false);
-  const [authed, setAuthed] = useState(false);
+  // Mode demo: status awal dibaca sinkron (tanpa backend, tanpa subscription).
+  const [ready, setReady] = useState(!isAuthConfigured);
+  const [authed, setAuthed] = useState(
+    () => !isAuthConfigured && demoAdminSession(tenant.slug),
+  );
 
   useEffect(() => {
-    try {
-      setAuthed(sessionStorage.getItem(key) === '1');
-    } catch {
-      /* ignore */
-    }
-    setReady(true);
-  }, [key]);
+    if (!isAuthConfigured) return () => {};
+    // Sesi demo per-slug: reset saat slug berubah.
+    const unsub = subscribeToAuth((session) => {
+      setAuthed(Boolean(session) && canAdminTenant(session?.claims, tenant.slug));
+      setReady(true);
+    });
+    return () => unsub?.();
+  }, [tenant.slug]);
 
-  const login = () => {
-    try {
-      sessionStorage.setItem(key, '1');
-    } catch {
-      /* ignore */
-    }
-    setAuthed(true);
-  };
+  const login = () => setAuthed(true);
 
-  const logout = () => {
-    try {
-      sessionStorage.removeItem(key);
-    } catch {
-      /* ignore */
+  const handleLogout = async () => {
+    if (isAuthConfigured) {
+      await logout();
+    } else {
+      demoAdminLogout(tenant.slug);
     }
     setAuthed(false);
   };
@@ -103,7 +109,7 @@ export default function AdminShell({ children }) {
               <Icon name="arrowLeft" size={16} />
               <span className="hide-sm">Lihat Menu</span>
             </Link>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={logout}>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={handleLogout}>
               <Icon name="logout" size={16} />
               <span className="hide-sm">Keluar</span>
             </button>

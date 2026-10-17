@@ -11,7 +11,7 @@ import {
   updateOrderStatus,
   isFirebaseConfigured,
 } from '@/lib/db';
-import { ORDER_STATUS } from '@/lib/constants';
+import { ORDER_STATUS, canTransition } from '@/lib/constants';
 import { formatCurrency, isToday } from '@/lib/format';
 
 const COLUMNS = [
@@ -64,13 +64,18 @@ function Dashboard() {
   }, [orders, byStatus]);
 
   const handleUpdate = async (id, status) => {
+    const current = orders.find((o) => o.id === id)?.status;
+    if (!canTransition(current, status)) {
+      toast.error('Transisi status tidak sah');
+      return;
+    }
     try {
-      await updateOrderStatus(tenant.slug, id, status);
+      await updateOrderStatus(tenant.slug, id, status, current);
       const label =
         status === ORDER_STATUS.CANCELLED ? 'Pesanan dibatalkan' : 'Status diperbarui';
       toast.success(label);
-    } catch {
-      toast.error('Gagal memperbarui status');
+    } catch (err) {
+      toast.error(err?.message || 'Gagal memperbarui status');
     }
   };
 
